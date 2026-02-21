@@ -61,8 +61,9 @@ class ChangeIntent:
 
 
 class BlastRadiusAnalyzer:
-    def __init__(self, project_path: str = "project") -> None:
+    def __init__(self, project_path: str = "project", allow_symbol_target: bool = False) -> None:
         self.project_path = project_path
+        self.allow_symbol_target = allow_symbol_target
         self.graph = nx.DiGraph()
         self.module_trees: Dict[str, ast.AST] = {}
         self.module_paths: Dict[str, str] = {}
@@ -381,6 +382,8 @@ class BlastRadiusAnalyzer:
         raw_target = raw_target.strip()
         if raw_target in self.graph:
             return raw_target
+        if not self.allow_symbol_target:
+            raise ValueError("Target must be fully-qualified node ID.")
 
         matches = []
         for node_id, data in self.graph.nodes(data=True):
@@ -798,6 +801,11 @@ def report_to_markdown(report: Dict[str, Any]) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Blast radius analyzer")
     parser.add_argument("--project-path", default="project", help="Path to Python project")
+    parser.add_argument(
+        "--allow-symbol-target",
+        action="store_true",
+        help="Allow non-qualified target names when they uniquely map to one node",
+    )
     parser.add_argument("--intent-file", help="Path to JSON file containing change intent")
     parser.add_argument("--intent-json", help="Inline JSON string containing change intent")
     parser.add_argument("--output-json", default="blast_report.json", help="JSON report output path")
@@ -807,7 +815,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    analyzer = BlastRadiusAnalyzer(project_path=args.project_path)
+    analyzer = BlastRadiusAnalyzer(
+        project_path=args.project_path,
+        allow_symbol_target=args.allow_symbol_target,
+    )
     analyzer.build_graph()
 
     try:

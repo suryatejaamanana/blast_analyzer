@@ -29,7 +29,7 @@ class BlastAnalyzerTests(unittest.TestCase):
     def test_validate_and_normalize_intent(self) -> None:
         raw = {
             "change_type": "api_modification",
-            "target": "post_user",
+            "target": "function:api.user_api.post_user",
             "modification": "add_optional_field",
         }
         intent, target = self.analyzer.validate_and_normalize_intent(raw)
@@ -40,7 +40,7 @@ class BlastAnalyzerTests(unittest.TestCase):
     def test_report_has_direct_and_indirect_sections(self) -> None:
         raw = {
             "change_type": "function_logic_change",
-            "target": "create_user",
+            "target": "function:services.user_service.create_user",
             "modification": "adjust validation flow",
         }
         intent, target = self.analyzer.validate_and_normalize_intent(raw)
@@ -71,6 +71,20 @@ class BlastAnalyzerTests(unittest.TestCase):
             parent = "class:sample.Parent"
             self.assertTrue(graph.has_edge(child, parent))
             self.assertEqual(graph[child][parent]["relation"], "INHERITS")
+
+    def test_symbol_target_requires_opt_in(self) -> None:
+        raw = {
+            "change_type": "function_logic_change",
+            "target": "create_user",
+            "modification": "adjust validation flow",
+        }
+        with self.assertRaises(ValueError):
+            self.analyzer.validate_and_normalize_intent(raw)
+
+        relaxed = BlastRadiusAnalyzer(project_path="project", allow_symbol_target=True)
+        relaxed.build_graph()
+        _, target = relaxed.validate_and_normalize_intent(raw)
+        self.assertEqual(target, "function:services.user_service.create_user")
 
 
 if __name__ == "__main__":

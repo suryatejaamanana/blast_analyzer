@@ -26,11 +26,11 @@ class SpecComplianceTests(unittest.TestCase):
 
     def test_change_intent_accepts_supported_types(self) -> None:
         cases = [
-            {"change_type": "api_modification", "target": "post_user", "modification": "add_optional_field"},
-            {"change_type": "function_logic_change", "target": "create_user", "modification": "adjust flow"},
-            {"change_type": "validation_rule_change", "target": "validate_user", "modification": "change min age"},
-            {"change_type": "refactor_shared_method", "target": "create_user", "modification": "extract helper"},
-            {"change_type": "data_model_change", "target": "User", "modification": "add field"},
+            {"change_type": "api_modification", "target": "function:api.user_api.post_user", "modification": "add_optional_field"},
+            {"change_type": "function_logic_change", "target": "function:services.user_service.create_user", "modification": "adjust flow"},
+            {"change_type": "validation_rule_change", "target": "function:utils.validation.validate_user", "modification": "change min age"},
+            {"change_type": "refactor_shared_method", "target": "function:services.user_service.create_user", "modification": "extract helper"},
+            {"change_type": "data_model_change", "target": "class:models.user_model.User", "modification": "add field"},
         ]
         for raw in cases:
             intent, target = self.analyzer.validate_and_normalize_intent(raw)
@@ -40,14 +40,14 @@ class SpecComplianceTests(unittest.TestCase):
     def test_change_intent_rejects_invalid_type(self) -> None:
         with self.assertRaises(ValueError):
             self.analyzer.validate_and_normalize_intent(
-                {"change_type": "invalid_type", "target": "create_user", "modification": "x"}
+                {"change_type": "invalid_type", "target": "function:services.user_service.create_user", "modification": "x"}
             )
 
     def test_direct_and_indirect_impacts_present(self) -> None:
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "function_logic_change",
-                "target": "create_user",
+                "target": "function:services.user_service.create_user",
                 "modification": "adjust validation flow",
             }
         )
@@ -65,7 +65,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "function_logic_change",
-                "target": "create_user",
+                "target": "function:services.user_service.create_user",
                 "modification": "adjust validation flow",
             }
         )
@@ -81,7 +81,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "function_logic_change",
-                "target": "create_user",
+                "target": "function:services.user_service.create_user",
                 "modification": "adjust validation flow",
             }
         )
@@ -94,7 +94,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "function_logic_change",
-                "target": "create_user",
+                "target": "function:services.user_service.create_user",
                 "modification": "adjust validation flow",
             }
         )
@@ -110,7 +110,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "function_logic_change",
-                "target": "create_user",
+                "target": "function:services.user_service.create_user",
                 "modification": "adjust validation flow",
             }
         )
@@ -122,7 +122,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "api_modification",
-                "target": "post_user",
+                "target": "function:api.user_api.post_user",
                 "modification": "rename field",
             }
         )
@@ -134,7 +134,7 @@ class SpecComplianceTests(unittest.TestCase):
             intent, target = self.analyzer.validate_and_normalize_intent(
                 {
                     "change_type": "api_modification",
-                    "target": "post_user",
+                    "target": "function:api.user_api.post_user",
                     "modification": modification,
                 }
             )
@@ -145,7 +145,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "api_modification",
-                "target": "post_user",
+                "target": "function:api.user_api.post_user",
                 "modification": "add optional field nickname",
             }
         )
@@ -156,7 +156,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "function_logic_change",
-                "target": "create_user",
+                "target": "function:services.user_service.create_user",
                 "modification": "change signature",
             }
         )
@@ -167,7 +167,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "function_logic_change",
-                "target": "create_user",
+                "target": "function:services.user_service.create_user",
                 "modification": "adjust validation flow",
             }
         )
@@ -191,7 +191,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "api_modification",
-                "target": "status",
+                "target": "function:web.public.status",
                 "modification": "adjust response shape",
             }
         )
@@ -222,7 +222,7 @@ class SpecComplianceTests(unittest.TestCase):
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
                 "change_type": "data_model_change",
-                "target": "User",
+                "target": "class:models.user_model.User",
                 "modification": "add field",
             }
         )
