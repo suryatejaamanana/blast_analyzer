@@ -2,7 +2,7 @@
     "change_intent": {
         "type": "API_CHANGE",
         "target": "create_user",
-        "description": "Add optional field email"
+        "description": "Add required field email"
     },
     "impact": [
         {
@@ -10,6 +10,18 @@
             "layer": "Service Layer",
             "impact_type": "Root Change",
             "reason": "Target of change"
+        },
+        {
+            "component": "save_user",
+            "layer": "Database Layer",
+            "impact_type": "Downstream Impact",
+            "reason": "Depends on 'create_user' directly or indirectly"
+        },
+        {
+            "component": "post_user",
+            "layer": "API Layer",
+            "impact_type": "Upstream Impact",
+            "reason": "Calls or references 'create_user'"
         },
         {
             "component": "User",
@@ -26,18 +38,6 @@
         {
             "component": "print",
             "layer": "Unknown Layer",
-            "impact_type": "Downstream Impact",
-            "reason": "Depends on 'create_user' directly or indirectly"
-        },
-        {
-            "component": "post_user",
-            "layer": "API Layer",
-            "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'create_user'"
-        },
-        {
-            "component": "save_user",
-            "layer": "Database Layer",
             "impact_type": "Downstream Impact",
             "reason": "Depends on 'create_user' directly or indirectly"
         }

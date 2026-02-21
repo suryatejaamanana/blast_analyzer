@@ -183,6 +183,24 @@ def get_change_intent():
         "description": description
     }
 
+def detect_contract_break_by_intent(change_intent):
+    change_type = change_intent["type"]
+    description = change_intent["description"].lower()
+
+    if change_type == "API_CHANGE":
+        if "add required" in description:
+            return True
+        if "remove" in description:
+            return True
+        if "rename" in description:
+            return True
+
+    if change_type == "REFACTOR":
+        if "rename" in description:
+            return True
+
+    return False
+
 if __name__ == "__main__":
 
     scan_project()
@@ -257,12 +275,19 @@ if forward and reverse:
         "impact": explanation_report
     })
 
+
     trace_paths = find_trace_paths(target)
 
     print("\nTraceability Paths:\n")
 
     for node, path in trace_paths.items():
         print(" → ".join(path))
+
+    contract_break = detect_contract_break_by_intent(change_intent)
+
+    if contract_break:
+        print("\n⚠ CONTRACT BREAKING CHANGE DETECTED")
+        print("Reason: API contract or public interface modified")
 
     if detect_contract_break(target):
         print("\n⚠ Potential Contract Breaking Change Detected")
