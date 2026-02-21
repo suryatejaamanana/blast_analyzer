@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from blast_analyzer import BlastRadiusAnalyzer
 
@@ -49,6 +51,26 @@ class BlastAnalyzerTests(unittest.TestCase):
         self.assertIn("risk_areas", report)
         self.assertIn("severity", report)
         self.assertGreaterEqual(len(report["direct_impacts"]), 1)
+
+    def test_inheritance_edges_use_inherits_relation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            pkg = Path(tmpdir)
+            (pkg / "sample.py").write_text(
+                "class Parent:\n"
+                "    pass\n\n"
+                "class Child(Parent):\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+
+            analyzer = BlastRadiusAnalyzer(project_path=tmpdir)
+            analyzer.build_graph()
+            graph = analyzer.graph
+
+            child = "class:sample.Child"
+            parent = "class:sample.Parent"
+            self.assertTrue(graph.has_edge(child, parent))
+            self.assertEqual(graph[child][parent]["relation"], "INHERITS")
 
 
 if __name__ == "__main__":

@@ -151,6 +151,15 @@ class SpecComplianceTests(unittest.TestCase):
         self.assertTrue(intent.change_type)
         self.assertTrue(target in self.analyzer.graph)
 
+    def test_trace_path_keeps_target_to_impact_direction(self) -> None:
+        dep_graph = self.analyzer._dependency_subgraph()
+        target = "function:services.user_service.create_user"
+        caller = "function:api.user_api.post_user"
+
+        path = self.analyzer._trace_path(dep_graph, target, caller)
+
+        self.assertEqual(path, [target, caller])
+
 
 if __name__ == "__main__":
     unittest.main()

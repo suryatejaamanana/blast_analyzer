@@ -18,7 +18,7 @@ SUPPORTED_CHANGE_TYPES = {
 }
 
 BREAKING_KEYWORDS = {"remove", "rename", "add_required", "required"}
-DEPENDENCY_RELATIONS = {"CALLS", "DEPENDS_ON", "READS", "WRITES", "RETURNS"}
+DEPENDENCY_RELATIONS = {"CALLS", "DEPENDS_ON", "INHERITS", "READS", "WRITES", "RETURNS"}
 
 
 @dataclass
@@ -178,7 +178,7 @@ class BlastRadiusAnalyzer:
         for class_node, base_expr in context["inheritance"]:
             resolved = self._resolve_expression(module_name, base_expr, current_class=None)
             if resolved:
-                self.graph.add_edge(class_node, resolved, relation="DEPENDS_ON")
+                self.graph.add_edge(class_node, resolved, relation="INHERITS")
             else:
                 self.unknown_impact_zones.add(f"Unresolved inheritance: {self._expr_text(base_expr)}")
 
@@ -417,8 +417,6 @@ class BlastRadiusAnalyzer:
     def _trace_path(self, dep_graph: nx.DiGraph, target_node: str, node: str) -> List[str]:
         if nx.has_path(dep_graph, target_node, node):
             return nx.shortest_path(dep_graph, source=target_node, target=node)
-        if nx.has_path(dep_graph, node, target_node):
-            return nx.shortest_path(dep_graph, source=node, target=target_node)
         return [target_node, node]
 
     def _path_relations(self, path: List[str]) -> List[str]:
