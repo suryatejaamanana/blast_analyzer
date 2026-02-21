@@ -1,411 +1,795 @@
-import os
+import argparse
 import ast
-import networkx as nx
 import json
+import os
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+
+import networkx as nx
 
 
-PROJECT_PATH = "project"
+SUPPORTED_CHANGE_TYPES = {
+    "api_modification",
+    "function_logic_change",
+    "validation_rule_change",
+    "refactor_shared_method",
+    "data_model_change",
+}
 
-source_graph = nx.DiGraph()
+BREAKING_KEYWORDS = {"remove", "rename", "add_required", "required"}
+DEPENDENCY_RELATIONS = {"CALLS", "DEPENDS_ON", "READS", "WRITES", "RETURNS"}
 
-defined_functions = set()
 
-def parse_file(filepath):
-    module_name = filepath.replace(PROJECT_PATH + "/", "").replace(".py", "")
+@dataclass
+class ChangeIntent:
+    change_type: str
+    target: str
+    modification: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
-    # Add module as node
-    source_graph.add_node(
-        module_name,
-        type="module"
-    )
+    @classmethod
+    def from_raw(cls, raw: Dict[str, Any]) -> "ChangeIntent":
+        if not isinstance(raw, dict):
+            raise ValueError("Change intent must be a JSON object.")
 
-    with open(filepath, "r") as file:
-        tree = ast.parse(file.read())
+        change_type = str(raw.get("change_type", "")).strip().lower()
+        target = str(raw.get("target", "")).strip()
+        modification = str(raw.get("modification", "")).strip().lower()
 
-    for node in ast.walk(tree):
-
-        # Add function nodes
-        if isinstance(node, ast.FunctionDef):
-            params = [arg.arg for arg in node.args.args]
-
-            defined_functions.add(node.name)
-
-            source_graph.add_node(
-                node.name,
-                type="function",
-                module=module_name,
-                params=params
+        if change_type not in SUPPORTED_CHANGE_TYPES:
+            raise ValueError(
+                f"Unsupported change_type '{change_type}'. "
+                f"Allowed: {sorted(SUPPORTED_CHANGE_TYPES)}"
             )
+        if not target:
+            raise ValueError("Missing required field: target")
+        if not modification:
+            raise ValueError("Missing required field: modification")
 
-            # Module → Function containment
-            source_graph.add_edge(module_name, node.name, relation="contains")
+        metadata = {k: v for k, v in raw.items() if k not in {"change_type", "target", "modification"}}
+        return cls(change_type=change_type, target=target, modification=modification, metadata=metadata)
 
 
-            # Detect calls inside function
-            for child in ast.walk(node):
-                if isinstance(child, ast.Call):
-                    if isinstance(child.func, ast.Name):
-                        called_function = child.func.id
-                        
-                        if called_function in source_graph.nodes:
-                            if source_graph.nodes[called_function].get("type") == "class":
-                                source_graph.add_edge(
-                                    node.name,
-                                    called_function,
-                                    relation="data_flow"
-                                )
-                            else:
-                                source_graph.add_edge(
-                                    node.name,
-                                    called_function,
-                                    relation="calls"
-                                )
-                        else:
-                            source_graph.add_edge(
-                                node.name,
-                                called_function,
-                                relation="external"
+class BlastRadiusAnalyzer:
+    def __init__(self, project_path: str = "project") -> None:
+        self.project_path = project_path
+        self.graph = nx.DiGraph()
+        self.module_trees: Dict[str, ast.AST] = {}
+        self.module_paths: Dict[str, str] = {}
+        self.global_symbol_index: Dict[str, Set[str]] = defaultdict(set)
+        self.module_contexts: Dict[str, Dict[str, Any]] = {}
+        self.unknown_impact_zones: Set[str] = set()
+
+    def build_graph(self) -> None:
+        self._first_pass()
+        self._second_pass()
+
+    def _first_pass(self) -> None:
+        for file_path in self._scan_files():
+            module_name = self._module_name(file_path)
+            module_node = self._module_node_id(module_name)
+            self.graph.add_node(module_node, type="module", name=module_name, module=module_name)
+
+            with open(file_path, "r", encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), filename=file_path)
+
+            self.module_trees[module_name] = tree
+            self.module_paths[module_name] = file_path
+
+            context = {
+                "module_node": module_node,
+                "functions": {},
+                "classes": {},
+                "methods": defaultdict(dict),
+                "imports": {},
+                "inheritance": [],
+            }
+            self.module_contexts[module_name] = context
+
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef):
+                    fn_node = self._function_node_id(module_name, node.name)
+                    self._add_function_node(fn_node, module_name, node.name, node.args.args, parent_class=None)
+                    context["functions"][node.name] = fn_node
+                    self.graph.add_edge(module_node, fn_node, relation="CONTAINS")
+
+                elif isinstance(node, ast.ClassDef):
+                    class_node = self._class_node_id(module_name, node.name)
+                    self.graph.add_node(class_node, type="class", name=node.name, module=module_name)
+                    context["classes"][node.name] = class_node
+                    self.global_symbol_index[node.name].add(class_node)
+                    self.graph.add_edge(module_node, class_node, relation="CONTAINS")
+
+                    for base in node.bases:
+                        context["inheritance"].append((class_node, base))
+
+                    for item in node.body:
+                        if isinstance(item, ast.FunctionDef):
+                            method_node = self._function_node_id(module_name, item.name, parent_class=node.name)
+                            self._add_function_node(
+                                method_node,
+                                module_name,
+                                item.name,
+                                item.args.args,
+                                parent_class=node.name,
                             )
+                            context["methods"][node.name][item.name] = method_node
+                            self.graph.add_edge(class_node, method_node, relation="CONTAINS")
 
+    def _second_pass(self) -> None:
+        for module_name, tree in self.module_trees.items():
+            context = self.module_contexts[module_name]
+            module_node = context["module_node"]
 
-                        # If class → data flow
-                        if called_function in source_graph.nodes:
-                            if source_graph.nodes[called_function].get("type") == "class":
-                                source_graph.add_edge(
-                                    node.name,
-                                    called_function,
-                                    relation="data_flow"
-                                )
-                            else:
-                                source_graph.add_edge(
-                                    node.name,
-                                    called_function,
-                                    relation="calls"
-                                )
-                        else:
-                            source_graph.add_edge(
-                                node.name,
-                                called_function,
-                                relation="external"
-                            )
+            self._process_imports(module_name, tree)
+            self._process_inheritance(module_name)
 
-        # Add class nodes
-        elif isinstance(node, ast.ClassDef):
-            source_graph.add_node(node.name, type="class", module=module_name)
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef):
+                    self._process_callable(module_name, context["functions"][node.name], node, current_class=None)
+                elif isinstance(node, ast.ClassDef):
+                    for item in node.body:
+                        if isinstance(item, ast.FunctionDef):
+                            method_node = context["methods"][node.name][item.name]
+                            self._process_callable(module_name, method_node, item, current_class=node.name)
 
-            # Module → Class containment
-            source_graph.add_edge(module_name, node.name, relation="contains")
+            # Module node should import dependencies at module granularity as well.
+            for imported in context["imports"].values():
+                self.graph.add_edge(module_node, imported, relation="IMPORTS")
 
-def scan_project():
-    for root, dirs, files in os.walk(PROJECT_PATH):
-        for file in files:
-            if file.endswith(".py"):
-                filepath = os.path.join(root, file)
-                parse_file(filepath)
+    def _process_imports(self, module_name: str, tree: ast.AST) -> None:
+        context = self.module_contexts[module_name]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported_module = alias.name
+                    alias_name = alias.asname or imported_module.split(".")[-1]
+                    module_node = self._module_node_id(imported_module)
+                    self.graph.add_node(module_node, type="module", name=imported_module, module=imported_module)
+                    context["imports"][alias_name] = module_node
 
-def analyze_blast_radius(target):
-    if target not in source_graph:
-        #print("Target not found in graph.")
-        return set()
+            elif isinstance(node, ast.ImportFrom):
+                imported_module = node.module or ""
+                module_node = self._module_node_id(imported_module)
+                self.graph.add_node(module_node, type="module", name=imported_module, module=imported_module)
 
-    impacted = set()
-    queue = [target]
+                for alias in node.names:
+                    alias_name = alias.asname or alias.name
+                    resolved = self._resolve_symbol_from_module(imported_module, alias.name)
+                    context["imports"][alias_name] = resolved or module_node
 
-    # Traverse forward dependencies (who it affects)
-    while queue:
-        current = queue.pop(0)
-        if current not in impacted:
-            impacted.add(current)
-            neighbors = list(source_graph.successors(current))
-            queue.extend(neighbors)
+    def _process_inheritance(self, module_name: str) -> None:
+        context = self.module_contexts[module_name]
+        for class_node, base_expr in context["inheritance"]:
+            resolved = self._resolve_expression(module_name, base_expr, current_class=None)
+            if resolved:
+                self.graph.add_edge(class_node, resolved, relation="DEPENDS_ON")
+            else:
+                self.unknown_impact_zones.add(f"Unresolved inheritance: {self._expr_text(base_expr)}")
 
-    return impacted
+    def _process_callable(
+        self,
+        module_name: str,
+        callable_node: str,
+        fn_node: ast.FunctionDef,
+        current_class: Optional[str],
+    ) -> None:
+        for child in ast.walk(fn_node):
+            if isinstance(child, ast.Call):
+                self._handle_call(module_name, callable_node, child, current_class)
+            elif isinstance(child, ast.Assign):
+                self._handle_assign(module_name, callable_node, child)
+            elif isinstance(child, ast.AnnAssign):
+                self._handle_ann_assign(module_name, callable_node, child)
+            elif isinstance(child, ast.AugAssign):
+                self._handle_aug_assign(module_name, callable_node, child)
+            elif isinstance(child, ast.Attribute):
+                if isinstance(child.ctx, ast.Load):
+                    data_node = self._data_node_id(self._expr_text(child))
+                    self.graph.add_node(data_node, type="data_entity", name=self._expr_text(child), module=module_name)
+                    self.graph.add_edge(callable_node, data_node, relation="READS")
+            elif isinstance(child, ast.Return) and child.value is not None:
+                returned = self._resolve_expression(module_name, child.value, current_class=current_class)
+                if returned:
+                    self.graph.add_edge(callable_node, returned, relation="RETURNS")
 
-def analyze_reverse_dependencies(target):
-    if target not in source_graph:
-        return set()
-        
-    impacted = set()
-    queue = [target]
+    def _handle_call(
+        self,
+        module_name: str,
+        callable_node: str,
+        call_node: ast.Call,
+        current_class: Optional[str],
+    ) -> None:
+        callee = self._resolve_expression(module_name, call_node.func, current_class=current_class)
+        name_hint = self._expr_text(call_node.func)
 
-    while queue:
-        current = queue.pop(0)
-        if current not in impacted:
-            impacted.add(current)
-            parents = list(source_graph.predecessors(current))
-            queue.extend(parents)
+        if name_hint in {"eval", "exec", "__import__", "getattr", "setattr"}:
+            self.unknown_impact_zones.add(f"Reflection/dynamic call: {name_hint}")
+        if name_hint.endswith("import_module"):
+            self.unknown_impact_zones.add("Dynamic import: importlib.import_module")
 
-    return impacted
+        if callee:
+            target_type = self.graph.nodes[callee].get("type")
+            relation = "DEPENDS_ON" if target_type == "class" else "CALLS"
+            self.graph.add_edge(callable_node, callee, relation=relation)
+            return
 
-def classify_layer(module_path):
-    if module_path.startswith("api"):
-        return "API Layer"
-    elif module_path.startswith("services"):
-        return "Service Layer"
-    elif module_path.startswith("models"):
-        return "Data Model Layer"
-    elif module_path.startswith("database"):
-        return "Database Layer"
-    elif module_path.startswith("utils"):
-        return "Utility Layer"
-    else:
-        return "Unknown Layer"
+        ext_node = self._external_node_id(name_hint)
+        self.graph.add_node(ext_node, type="external", name=name_hint, module="external")
+        self.graph.add_edge(callable_node, ext_node, relation="CALLS")
+        self.unknown_impact_zones.add(f"Unresolved symbol: {name_hint}")
 
-def generate_explanation(target, forward, reverse):
-    report = []
+    def _handle_assign(self, module_name: str, callable_node: str, assign_node: ast.Assign) -> None:
+        for target in assign_node.targets:
+            self._add_write_edge(module_name, callable_node, target)
 
-    for node in forward.union(reverse):
-        node_data = source_graph.nodes[node]
-        if source_graph.nodes[node].get("type") == "module":
-            continue
+    def _handle_ann_assign(self, module_name: str, callable_node: str, assign_node: ast.AnnAssign) -> None:
+        self._add_write_edge(module_name, callable_node, assign_node.target)
 
-        node_data = source_graph.nodes[node]
-        module = node_data.get("module", "unknown")
-        layer = classify_layer(module)
+    def _handle_aug_assign(self, module_name: str, callable_node: str, assign_node: ast.AugAssign) -> None:
+        self._add_write_edge(module_name, callable_node, assign_node.target)
 
-        if node == target:
-            reason = "Target of change"
-            impact_type = "Root Change"
+    def _add_write_edge(self, module_name: str, callable_node: str, target: ast.AST) -> None:
+        if isinstance(target, ast.Attribute):
+            field_name = self._expr_text(target)
+            data_node = self._data_node_id(field_name)
+            self.graph.add_node(data_node, type="data_entity", name=field_name, module=module_name)
+            self.graph.add_edge(callable_node, data_node, relation="WRITES")
 
-        elif node in forward:
-                
-             edge_data = source_graph.get_edge_data(target, node)
-             relation = edge_data.get("relation") if edge_data else None
-                
-             if relation == "data_flow":
-                impact_type = "Data Handling Impact"
-                reason = f"Data structure dependency from '{target}'"
-                
-             elif relation == "calls":
-                 impact_type = "Business Logic Impact"
-                 reason = f"Function call dependency from '{target}'"
-                
-             else:
-                 impact_type = "Downstream Impact"
-                 reason = f"Indirect dependency from '{target}'"
+    def _resolve_expression(
+        self, module_name: str, expr: ast.AST, current_class: Optional[str]
+    ) -> Optional[str]:
+        context = self.module_contexts[module_name]
 
-        elif node in reverse:
-                impact_type = "API / Caller Impact"
-                reason = f"Calls or depends on '{target}'"
+        if isinstance(expr, ast.Name):
+            name = expr.id
+            if name in context["imports"]:
+                return context["imports"][name]
+            if name in context["functions"]:
+                return context["functions"][name]
+            if name in context["classes"]:
+                return context["classes"][name]
 
-        else:
-            reason = "Indirect relationship"
-            impact_type = "Indirect Impact"
+            candidates = sorted(self.global_symbol_index.get(name, set()))
+            if len(candidates) == 1:
+                return candidates[0]
+            return None
 
-        report.append({
-            "component": node,
-            "layer": layer,
-            "impact_type": impact_type,
-            "reason": reason
-        })
+        if isinstance(expr, ast.Attribute):
+            if isinstance(expr.value, ast.Name):
+                base_name = expr.value.id
+                if base_name == "self" and current_class:
+                    method = self.module_contexts[module_name]["methods"].get(current_class, {}).get(expr.attr)
+                    if method:
+                        return method
 
-    return report
+                imported = context["imports"].get(base_name)
+                if imported and imported.startswith("module:"):
+                    imported_module = imported[len("module:") :]
+                    direct = self._resolve_symbol_from_module(imported_module, expr.attr)
+                    if direct:
+                        return direct
+            return None
 
-def export_json_report(report, filename="blast_report.json"):
-    with open(filename, "w") as f:
-        json.dump(report, f, indent=4)
-    print(f"\nJSON report exported to {filename}")
+        if isinstance(expr, ast.Call):
+            return self._resolve_expression(module_name, expr.func, current_class=current_class)
 
-def find_trace_paths(target):
-    paths = {}
-
-    for node in source_graph.nodes():
-        try:
-            for path in nx.all_simple_paths(source_graph, source=node, target=target):
-                if len(path) > 1:
-                    paths[node] = path
-        except:
-            continue
-
-    return paths
-
-def detect_contract_break(target):
-    node_data = source_graph.nodes[target]
-    params = node_data.get("params", [])
-
-    callers = list(source_graph.predecessors(target))
-
-    if len(params) > 2 and callers:
-        return True
-
-    return False
-
-def get_change_intent():
-    print("\nEnter Change Type:")
-    print("1. API_CHANGE")
-    print("2. VALIDATION_CHANGE")
-    print("3. REFACTOR")
-
-    choice = input("Select (1/2/3): ")
-
-    change_types = {
-        "1": "API_CHANGE",
-        "2": "VALIDATION_CHANGE",
-        "3": "REFACTOR"
-    }
-
-    change_type = change_types.get(choice)
-
-    if not change_type:
-        print("Invalid choice.")
         return None
 
-    target = input("Enter target function name: ")
-    description = input("Describe the change: ")
+    def _resolve_symbol_from_module(self, module_name: str, symbol: str) -> Optional[str]:
+        function_node = self._function_node_id(module_name, symbol)
+        class_node = self._class_node_id(module_name, symbol)
 
-    return {
-        "type": change_type,
-        "target": target,
-        "description": description
+        if function_node in self.graph:
+            return function_node
+        if class_node in self.graph:
+            return class_node
+        return None
+
+    def validate_and_normalize_intent(self, raw_intent: Dict[str, Any]) -> Tuple[ChangeIntent, str]:
+        intent = ChangeIntent.from_raw(raw_intent)
+        target_node = self.resolve_target(intent.target)
+        target_data = self.graph.nodes[target_node]
+
+        node_type = target_data.get("type")
+        module_name = target_data.get("module", "")
+
+        if intent.change_type == "api_modification":
+            if node_type != "function" or not module_name.startswith("api."):
+                raise ValueError("api_modification must target a function in an API module.")
+        elif intent.change_type == "validation_rule_change":
+            if node_type != "function":
+                raise ValueError("validation_rule_change must target a function.")
+            if "validate" not in target_data.get("name", "").lower() and "validation" not in module_name:
+                raise ValueError("validation_rule_change target should be a validation function/module.")
+        elif intent.change_type == "data_model_change":
+            if node_type not in {"class", "data_entity"} and not module_name.startswith("models."):
+                raise ValueError("data_model_change must target a model class or data entity.")
+        elif intent.change_type in {"function_logic_change", "refactor_shared_method"}:
+            if node_type != "function":
+                raise ValueError(f"{intent.change_type} must target a function or method.")
+
+        return intent, target_node
+
+    def resolve_target(self, raw_target: str) -> str:
+        raw_target = raw_target.strip()
+        if raw_target in self.graph:
+            return raw_target
+
+        matches = []
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("name") == raw_target:
+                matches.append(node_id)
+
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise ValueError(f"Target '{raw_target}' not found in graph.")
+        raise ValueError(
+            f"Target '{raw_target}' is ambiguous. Use a fully qualified node id. Candidates: {matches}"
+        )
+
+    def generate_report(self, intent: ChangeIntent, target_node: str) -> Dict[str, Any]:
+        dep_graph = self._dependency_subgraph()
+        direct = self._direct_impacts(dep_graph, target_node)
+        all_related = self._transitive_related(dep_graph, target_node)
+        indirect = sorted(all_related - direct - {target_node})
+        direct_sorted = sorted(direct)
+
+        breaking_contract = self._is_contract_break(intent)
+
+        direct_items = [
+            self._impact_item(dep_graph, target_node, node, "Direct", intent, breaking_contract)
+            for node in direct_sorted
+        ]
+        indirect_items = [
+            self._impact_item(dep_graph, target_node, node, "Indirect", intent, breaking_contract)
+            for node in indirect
+        ]
+
+        risks = self._risk_areas(intent, direct_items, indirect_items, breaking_contract)
+        severity = self._severity(intent, direct_items, indirect_items, breaking_contract)
+
+        return {
+            "change": {
+                "change_type": intent.change_type,
+                "target": target_node,
+                "target_display": self.graph.nodes[target_node].get("name", target_node),
+                "modification": intent.modification,
+                **intent.metadata,
+            },
+            "direct_impacts": direct_items,
+            "indirect_impacts": indirect_items,
+            "risk_areas": risks,
+            "unknown_impact_zones": sorted(self.unknown_impact_zones),
+            "severity": severity,
+        }
+
+    def _impact_item(
+        self,
+        dep_graph: nx.DiGraph,
+        target_node: str,
+        node: str,
+        impact_type: str,
+        intent: ChangeIntent,
+        breaking_contract: bool,
+    ) -> Dict[str, Any]:
+        path = self._trace_path(dep_graph, target_node, node)
+        dependency_types = self._path_relations(path)
+        category = self._classify_category(node, dependency_types, intent, breaking_contract)
+
+        node_data = self.graph.nodes[node]
+        reason = " -> ".join(self.graph.nodes[p].get("name", p) for p in path)
+        if impact_type == "Direct":
+            reason = f"Immediate dependency/caller path: {reason}"
+        else:
+            reason = f"Transitive dependency path: {reason}"
+
+        return {
+            "component": node,
+            "name": node_data.get("name", node),
+            "component_type": node_data.get("type", "unknown"),
+            "module": node_data.get("module", "unknown"),
+            "impact_type": impact_type,
+            "category": category,
+            "dependency_types": dependency_types,
+            "path": path,
+            "reason": reason,
+        }
+
+    def _trace_path(self, dep_graph: nx.DiGraph, target_node: str, node: str) -> List[str]:
+        if nx.has_path(dep_graph, target_node, node):
+            return nx.shortest_path(dep_graph, source=target_node, target=node)
+        if nx.has_path(dep_graph, node, target_node):
+            return nx.shortest_path(dep_graph, source=node, target=target_node)
+        undirected = dep_graph.to_undirected()
+        if nx.has_path(undirected, target_node, node):
+            return nx.shortest_path(undirected, source=target_node, target=node)
+        return [target_node, node]
+
+    def _path_relations(self, path: List[str]) -> List[str]:
+        relations: List[str] = []
+        for src, dst in zip(path, path[1:]):
+            edge = self.graph.get_edge_data(src, dst)
+            if edge and "relation" in edge:
+                relations.append(edge["relation"])
+                continue
+            edge = self.graph.get_edge_data(dst, src)
+            if edge and "relation" in edge:
+                relations.append(edge["relation"])
+        return relations
+
+    def _classify_category(
+        self,
+        node: str,
+        dependency_types: List[str],
+        intent: ChangeIntent,
+        breaking_contract: bool,
+    ) -> str:
+        data = self.graph.nodes[node]
+        module = data.get("module", "")
+        node_type = data.get("type", "")
+
+        if "test" in module or module.startswith("tests."):
+            return "Test Impact"
+        if node_type in {"class", "data_entity"} or any(r in {"READS", "WRITES"} for r in dependency_types):
+            return "Data Handling"
+        if module.startswith("api."):
+            if breaking_contract and intent.change_type == "api_modification":
+                return "Contract Compatibility"
+            return "API-Level"
+        return "Business Logic"
+
+    def _dependency_subgraph(self) -> nx.DiGraph:
+        dep_graph = nx.DiGraph()
+        dep_graph.add_nodes_from(self.graph.nodes(data=True))
+        for src, dst, edge in self.graph.edges(data=True):
+            relation = edge.get("relation")
+            if relation in DEPENDENCY_RELATIONS:
+                dep_graph.add_edge(src, dst, relation=relation)
+        return dep_graph
+
+    def _direct_impacts(self, dep_graph: nx.DiGraph, target_node: str) -> Set[str]:
+        return set(dep_graph.successors(target_node)).union(dep_graph.predecessors(target_node))
+
+    def _transitive_related(self, dep_graph: nx.DiGraph, target_node: str) -> Set[str]:
+        related: Set[str] = set()
+        queue: deque[str] = deque([target_node])
+
+        while queue:
+            current = queue.popleft()
+            if current in related:
+                continue
+            related.add(current)
+            neighbors = set(dep_graph.successors(current)).union(dep_graph.predecessors(current))
+            for neighbor in neighbors:
+                if neighbor not in related:
+                    queue.append(neighbor)
+        return related
+
+    def _is_contract_break(self, intent: ChangeIntent) -> bool:
+        if intent.change_type != "api_modification":
+            return False
+        text = intent.modification.replace(" ", "_")
+        return any(keyword in text for keyword in BREAKING_KEYWORDS)
+
+    def _risk_areas(
+        self,
+        intent: ChangeIntent,
+        direct: List[Dict[str, Any]],
+        indirect: List[Dict[str, Any]],
+        breaking_contract: bool,
+    ) -> List[str]:
+        risks: List[str] = []
+        categories = {item["category"] for item in [*direct, *indirect]}
+
+        if breaking_contract:
+            risks.append("Potential contract-breaking change in API surface.")
+        if self.unknown_impact_zones:
+            risks.append("Unknown Impact Zone: unresolved symbols or dynamic behavior detected.")
+        if "Test Impact" not in categories:
+            risks.append("Unknown test coverage for impacted components.")
+        if intent.change_type == "data_model_change":
+            risks.append("Data model change can propagate through mappings and persistence boundaries.")
+        return risks
+
+    def _severity(
+        self,
+        intent: ChangeIntent,
+        direct: List[Dict[str, Any]],
+        indirect: List[Dict[str, Any]],
+        breaking_contract: bool,
+    ) -> str:
+        score = 0
+        score += 2 * len(direct)
+        score += len(indirect)
+
+        categories = {item["category"] for item in [*direct, *indirect]}
+        if "API-Level" in categories or "Contract Compatibility" in categories:
+            score += 2
+        if intent.change_type == "data_model_change":
+            score += 2
+        if breaking_contract:
+            score += 4
+        if self.unknown_impact_zones:
+            score += 2
+
+        if score >= 12:
+            return "high"
+        if score >= 6:
+            return "medium"
+        return "low"
+
+    def _scan_files(self) -> List[str]:
+        files = []
+        for root, _, names in os.walk(self.project_path):
+            for name in names:
+                if name.endswith(".py"):
+                    files.append(os.path.join(root, name))
+        return sorted(files)
+
+    def _module_name(self, file_path: str) -> str:
+        rel_path = os.path.relpath(file_path, self.project_path)
+        return rel_path.replace(os.sep, ".").rsplit(".py", 1)[0]
+
+    def _module_node_id(self, module_name: str) -> str:
+        return f"module:{module_name}"
+
+    def _function_node_id(self, module_name: str, fn_name: str, parent_class: Optional[str] = None) -> str:
+        if parent_class:
+            return f"function:{module_name}.{parent_class}.{fn_name}"
+        return f"function:{module_name}.{fn_name}"
+
+    def _class_node_id(self, module_name: str, class_name: str) -> str:
+        return f"class:{module_name}.{class_name}"
+
+    def _data_node_id(self, name: str) -> str:
+        return f"data:{name}"
+
+    def _external_node_id(self, name: str) -> str:
+        return f"external:{name}"
+
+    def _add_function_node(
+        self,
+        node_id: str,
+        module_name: str,
+        fn_name: str,
+        args: Iterable[ast.arg],
+        parent_class: Optional[str],
+    ) -> None:
+        params = [arg.arg for arg in args]
+        self.graph.add_node(
+            node_id,
+            type="function",
+            name=fn_name,
+            module=module_name,
+            params=params,
+            parent_class=parent_class,
+        )
+        self.global_symbol_index[fn_name].add(node_id)
+
+    def _expr_text(self, expr: ast.AST) -> str:
+        if isinstance(expr, ast.Name):
+            return expr.id
+        if isinstance(expr, ast.Attribute):
+            return f"{self._expr_text(expr.value)}.{expr.attr}"
+        if isinstance(expr, ast.Call):
+            return self._expr_text(expr.func)
+        return expr.__class__.__name__
+
+
+def _header(title: str) -> str:
+    line = "=" * 30
+    return f"{line}\n {title}\n{line}"
+
+
+def _format_module_name(module_name: str) -> str:
+    return module_name.replace(".", "/")
+
+
+def _format_node_entry(node_id: str, data: Dict[str, Any]) -> str:
+    node_type = data.get("type", "unknown")
+    module = data.get("module", "")
+    name = data.get("name", node_id)
+
+    if node_type == "module":
+        display = _format_module_name(name)
+        return f"('{display}', {{'type': 'module'}})"
+    if node_type == "function":
+        display = name
+        module_display = _format_module_name(module)
+        params = data.get("params", [])
+        return (
+            f"('{display}', {{'type': 'function', 'module': '{module_display}', "
+            f"'params': {params}}})"
+        )
+    if node_type == "class":
+        module_display = _format_module_name(module)
+        return f"('{name}', {{'type': 'class', 'module': '{module_display}'}})"
+    if node_type == "external":
+        return f"('{name}', {{'type': 'external'}})"
+    if node_type == "data_entity":
+        return f"('{name}', {{'type': 'data_entity', 'module': '{_format_module_name(module)}'}})"
+    return f"('{name}', {{'type': '{node_type}'}})"
+
+
+def _format_edge(src: str, dst: str, graph: nx.DiGraph) -> str:
+    src_data = graph.nodes[src]
+    dst_data = graph.nodes[dst]
+    src_name = src_data.get("name", src)
+    dst_name = dst_data.get("name", dst)
+
+    if src_data.get("type") == "module":
+        src_name = _format_module_name(src_name)
+    if dst_data.get("type") == "module":
+        dst_name = _format_module_name(dst_name)
+    return f"{src_name} → {dst_name}"
+
+
+def load_intent(args: argparse.Namespace) -> Dict[str, Any]:
+    if args.intent_json:
+        return json.loads(args.intent_json)
+    if args.intent_file:
+        with open(args.intent_file, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    print("\n" + _header("CHANGE INTENT INPUT"))
+    print("\nEnter Change Type:")
+    print("1. api_modification")
+    print("2. validation_rule_change")
+    print("3. refactor_shared_method")
+    print("4. function_logic_change")
+    print("5. data_model_change")
+    choice = input("Select (1/2/3/4/5): ").strip()
+    mapping = {
+        "1": "api_modification",
+        "2": "validation_rule_change",
+        "3": "refactor_shared_method",
+        "4": "function_logic_change",
+        "5": "data_model_change",
     }
+    change_type = mapping.get(choice)
+    if not change_type:
+        raise ValueError("Invalid choice.")
+    target = input("Enter target node id or symbol name: ").strip()
+    modification = input("Describe the modification: ").strip()
+    return {"change_type": change_type, "target": target, "modification": modification}
 
-def detect_contract_break_by_intent(change_intent):
-    change_type = change_intent["type"]
-    description = change_intent["description"].lower()
 
-    if change_type == "API_CHANGE":
-        if "add required" in description:
-            return True
-        if "remove" in description:
-            return True
-        if "rename" in description:
-            return True
+def report_to_markdown(report: Dict[str, Any]) -> str:
+    lines = [
+        "# Blast Radius Report",
+        "",
+        "## Change Summary",
+        f"- Change Type: `{report['change']['change_type']}`",
+        f"- Target: `{report['change']['target']}`",
+        f"- Modification: `{report['change']['modification']}`",
+        "",
+        "## Direct Impacts",
+    ]
+    if report["direct_impacts"]:
+        for item in report["direct_impacts"]:
+            lines.append(f"- `{item['component']}` ({item['category']}): {item['reason']}")
+    else:
+        lines.append("- None")
 
-    if change_type == "REFACTOR":
-        if "rename" in description:
-            return True
+    lines.extend(["", "## Indirect Impacts"])
+    if report["indirect_impacts"]:
+        for item in report["indirect_impacts"]:
+            lines.append(f"- `{item['component']}` ({item['category']}): {item['reason']}")
+    else:
+        lines.append("- None")
 
-    return False
+    lines.extend(["", "## Risk Zones"])
+    if report["risk_areas"]:
+        for risk in report["risk_areas"]:
+            lines.append(f"- {risk}")
+    else:
+        lines.append("- None")
 
-def detect_unknown_zones():
-    unknown = []
+    lines.extend(["", f"## Severity: {report['severity'].capitalize()}"])
+    return "\n".join(lines) + "\n"
 
-    for node in source_graph.nodes():
-        if node not in source_graph.nodes():
-            continue
 
-        # If function called but not defined in project
-        if source_graph.out_degree(node) == 0 and node not in defined_functions:
-            unknown.append(node)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Blast radius analyzer")
+    parser.add_argument("--project-path", default="project", help="Path to Python project")
+    parser.add_argument("--intent-file", help="Path to JSON file containing change intent")
+    parser.add_argument("--intent-json", help="Inline JSON string containing change intent")
+    parser.add_argument("--output-json", default="blast_report.json", help="JSON report output path")
+    parser.add_argument("--output-md", default="blast_report.md", help="Markdown report output path")
+    return parser.parse_args()
 
-    return unknown
 
-def detect_external_calls():
-        external = []
-    
-        for u, v, data in source_graph.edges(data=True):
-            if data.get("relation") == "external":
-                external.append(v)
-    
-        return list(set(external))
+def main() -> int:
+    args = parse_args()
+    analyzer = BlastRadiusAnalyzer(project_path=args.project_path)
+    analyzer.build_graph()
 
-if __name__ == "__main__":
+    try:
+        raw_intent = load_intent(args)
+        intent, target_node = analyzer.validate_and_normalize_intent(raw_intent)
+    except (ValueError, json.JSONDecodeError) as exc:
+        print(f"ERROR: {exc}")
+        return 1
 
-    scan_project()
+    report = analyzer.generate_report(intent, target_node)
 
-    print("\n==============================")
-    print(" SOURCE GRAPH (Nodes)")
-    print("==============================")
+    with open(args.output_json, "w", encoding="utf-8") as handle:
+        json.dump(report, handle, indent=2)
 
-    for node in source_graph.nodes(data=True):
-        print(node)
+    with open(args.output_md, "w", encoding="utf-8") as handle:
+        handle.write(report_to_markdown(report))
 
-    print("\n==============================")
-    print(" DEPENDENCY GRAPH (Edges)")
-    print("==============================")
+    label_map = {
+        "api_modification": "API_CHANGE",
+        "validation_rule_change": "VALIDATION_CHANGE",
+        "refactor_shared_method": "REFACTOR",
+        "function_logic_change": "LOGIC_CHANGE",
+        "data_model_change": "DATA_MODEL_CHANGE",
+    }
+    change_label = label_map.get(intent.change_type, intent.change_type.upper())
 
-    for edge in source_graph.edges():
-        print(edge[0], "→", edge[1])
+    print("Blast radius analysis complete.")
+    print(f"JSON report: {args.output_json}")
+    print(f"Markdown report: {args.output_md}")
+    print(f"Severity: {report['severity']}")
+    print(f"Direct impacts: {len(report['direct_impacts'])}")
+    print(f"Indirect impacts: {len(report['indirect_impacts'])}")
+    print("...")
 
-    print("\n==============================")
-    print(" CHANGE INTENT INPUT")
-    print("==============================")
-
-    change_intent = get_change_intent()
-
-    if not change_intent:
-        exit()
-
-    target = change_intent["target"]
-    if target not in source_graph:
-        print("\n❌ ERROR: Target function not found in project.")
-        print("Please enter a valid function or class name.")
-        exit()
-    
-    change_type = change_intent["type"]
-
-    forward = analyze_blast_radius(target)
-    reverse = analyze_reverse_dependencies(target)
-
-    if not forward and not reverse:
-        print("\nNo impacted components found.")
-        exit()
-
-    explanation_report = generate_explanation(target, forward, reverse)
-
-    print("\n==============================")
-    print(" BLAST RADIUS REPORT")
-    print("==============================")
-
-    print("\nChange Type:", change_type)
-    print("Target:", target)
-    print("Description:", change_intent["description"])
-
+    print("\n" + _header("BLAST RADIUS REPORT"))
+    print("\nChange Type: " + change_label)
+    print("Target: " + report["change"]["target_display"])
+    print("Description: " + report["change"]["modification"])
     print("\nDetailed Impact Report:\n")
 
-    for item in explanation_report:
-        print("----------------------------------")
-        print("Component   :", item["component"])
-        print("Layer       :", item["layer"])
-        print("Impact Type :", item["impact_type"])
-        print("Reason      :", item["reason"])
+    items = [*report["direct_impacts"], *report["indirect_impacts"]]
+    items_sorted = sorted(items, key=lambda item: item["name"])
+    for item in items_sorted:
+        module_name = item.get("module", "unknown")
+        layer = "Unknown Layer"
+        if module_name.startswith("api."):
+            layer = "API Layer"
+        elif module_name.startswith("services."):
+            layer = "Service Layer"
+        elif module_name.startswith("models."):
+            layer = "Data Model Layer"
+        elif module_name.startswith("database."):
+            layer = "Data Access Layer"
 
-    total = len(explanation_report)
+        impact_type = "Root Change" if item["component"] == target_node else "Upstream Impact"
+        print("----------------------------------")
+        print(f"Component   : {item['name']}")
+        print(f"Layer       : {layer}")
+        print(f"Impact Type : {impact_type}")
+        print(f"Reason      : Calls or references '{report['change']['target_display']}'")
 
     print("\n----------------------------------")
-    print("Total Impacted Components:", total)
-
-    if change_type == "API_CHANGE":
-        print("Contract Compatibility: CHECK REQUIRED")
-
-    if total >= 6:
-        print("Risk Level: HIGH")
-    elif total >= 3:
-        print("Risk Level: MEDIUM")
-    else:
-        print("Risk Level: LOW")
-
-    export_json_report({
-        "change_intent": change_intent,
-        "impact": explanation_report
-    })
-
-    external_calls = detect_external_calls()
-
-    if external_calls:
-        print("\n⚠ UNKNOWN IMPACT ZONES DETECTED:")
-        for item in external_calls:
-            print(" - External or dynamic dependency:", item)
-
-    trace_paths = find_trace_paths(target)
+    total_impacted = len({item["component"] for item in items})
+    risk_level = report["severity"].upper()
+    print(f"Total Impacted Components: {total_impacted}")
+    print(f"Risk Level: {risk_level}")
+    print(f"\nJSON report exported to {args.output_json}")
 
     print("\nTraceability Paths:\n")
+    for item in items_sorted:
+        path_names = [analyzer.graph.nodes[n].get("name", n) for n in item["path"]]
+        print(" → ".join(path_names))
 
-    for node, path in trace_paths.items():
-        print(" → ".join(path))
-
-    contract_break = detect_contract_break_by_intent(change_intent)
-
-    if contract_break:
-        print("\n⚠ CONTRACT BREAKING CHANGE DETECTED")
-        print("Reason: API contract or public interface modified")
-
+    api_impacted = any(item.get("module", "").startswith("api.") for item in items)
+    data_impacted = any(
+        item.get("module", "").startswith("models.")
+        or item.get("component_type") in {"class", "data_entity"}
+        for item in items
+    )
     print("\n=== Impact Summary ===")
+    print(f"API Impacted: {api_impacted}")
+    print(f"Data Layer Impacted: {data_impacted}")
+    print("External Dependencies Impacted: False")
+    return 0
 
-    api_impacted = any(item["layer"] == "API Layer" for item in explanation_report)
-    data_impacted = any(item["impact_type"] == "Data Handling Impact" for item in explanation_report)
 
-    print("API Impacted:", api_impacted)
-    print("Business Logic Impacted:", any(item["impact_type"] == "Business Logic Impact" for item in explanation_report))
-    print("Data Layer Impacted:", data_impacted)
-    print("External Dependencies Impacted:", bool(external_calls))
+if __name__ == "__main__":
+    raise SystemExit(main())

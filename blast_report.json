@@ -1,45 +1,157 @@
 {
-    "change_intent": {
-        "type": "REFACTOR",
-        "target": "User",
-        "description": "Modify user structure"
+  "change": {
+    "change_type": "function_logic_change",
+    "target": "function:services.user_service.create_user",
+    "target_display": "create_user",
+    "modification": "adjust validation flow"
+  },
+  "direct_impacts": [
+    {
+      "component": "class:models.user_model.User",
+      "name": "User",
+      "component_type": "class",
+      "module": "models.user_model",
+      "impact_type": "Direct",
+      "category": "Data Handling",
+      "dependency_types": [
+        "DEPENDS_ON"
+      ],
+      "path": [
+        "function:services.user_service.create_user",
+        "class:models.user_model.User"
+      ],
+      "reason": "Immediate dependency/caller path: create_user -> User"
     },
-    "impact": [
-        {
-            "component": "api/user_api",
-            "layer": "Unknown Layer",
-            "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'User'"
-        },
-        {
-            "component": "create_user",
-            "layer": "Service Layer",
-            "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'User'"
-        },
-        {
-            "component": "User",
-            "layer": "Data Model Layer",
-            "impact_type": "Root Change",
-            "reason": "Target of change"
-        },
-        {
-            "component": "post_user",
-            "layer": "API Layer",
-            "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'User'"
-        },
-        {
-            "component": "services/user_service",
-            "layer": "Unknown Layer",
-            "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'User'"
-        },
-        {
-            "component": "models/user_model",
-            "layer": "Unknown Layer",
-            "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'User'"
-        }
-    ]
+    {
+      "component": "function:api.user_api.post_user",
+      "name": "post_user",
+      "component_type": "function",
+      "module": "api.user_api",
+      "impact_type": "Direct",
+      "category": "API-Level",
+      "dependency_types": [
+        "CALLS"
+      ],
+      "path": [
+        "function:api.user_api.post_user",
+        "function:services.user_service.create_user"
+      ],
+      "reason": "Immediate dependency/caller path: post_user -> create_user"
+    },
+    {
+      "component": "function:database.db.save_user",
+      "name": "save_user",
+      "component_type": "function",
+      "module": "database.db",
+      "impact_type": "Direct",
+      "category": "Business Logic",
+      "dependency_types": [
+        "CALLS"
+      ],
+      "path": [
+        "function:services.user_service.create_user",
+        "function:database.db.save_user"
+      ],
+      "reason": "Immediate dependency/caller path: create_user -> save_user"
+    },
+    {
+      "component": "function:utils.validation.validate_user",
+      "name": "validate_user",
+      "component_type": "function",
+      "module": "utils.validation",
+      "impact_type": "Direct",
+      "category": "Business Logic",
+      "dependency_types": [
+        "CALLS"
+      ],
+      "path": [
+        "function:services.user_service.create_user",
+        "function:utils.validation.validate_user"
+      ],
+      "reason": "Immediate dependency/caller path: create_user -> validate_user"
+    }
+  ],
+  "indirect_impacts": [
+    {
+      "component": "data:request.get",
+      "name": "request.get",
+      "component_type": "data_entity",
+      "module": "api.user_api",
+      "impact_type": "Indirect",
+      "category": "Data Handling",
+      "dependency_types": [
+        "CALLS",
+        "READS"
+      ],
+      "path": [
+        "function:services.user_service.create_user",
+        "function:api.user_api.post_user",
+        "data:request.get"
+      ],
+      "reason": "Transitive dependency path: create_user -> post_user -> request.get"
+    },
+    {
+      "component": "data:user.username",
+      "name": "user.username",
+      "component_type": "data_entity",
+      "module": "database.db",
+      "impact_type": "Indirect",
+      "category": "Data Handling",
+      "dependency_types": [
+        "CALLS",
+        "READS"
+      ],
+      "path": [
+        "function:services.user_service.create_user",
+        "function:database.db.save_user",
+        "data:user.username"
+      ],
+      "reason": "Transitive dependency path: create_user -> save_user -> user.username"
+    },
+    {
+      "component": "external:print",
+      "name": "print",
+      "component_type": "external",
+      "module": "external",
+      "impact_type": "Indirect",
+      "category": "Business Logic",
+      "dependency_types": [
+        "CALLS",
+        "CALLS"
+      ],
+      "path": [
+        "function:services.user_service.create_user",
+        "function:database.db.save_user",
+        "external:print"
+      ],
+      "reason": "Transitive dependency path: create_user -> save_user -> print"
+    },
+    {
+      "component": "external:request.get",
+      "name": "request.get",
+      "component_type": "external",
+      "module": "external",
+      "impact_type": "Indirect",
+      "category": "Business Logic",
+      "dependency_types": [
+        "CALLS",
+        "CALLS"
+      ],
+      "path": [
+        "function:services.user_service.create_user",
+        "function:api.user_api.post_user",
+        "external:request.get"
+      ],
+      "reason": "Transitive dependency path: create_user -> post_user -> request.get"
+    }
+  ],
+  "risk_areas": [
+    "Unknown Impact Zone: unresolved symbols or dynamic behavior detected.",
+    "Unknown test coverage for impacted components."
+  ],
+  "unknown_impact_zones": [
+    "Unresolved symbol: print",
+    "Unresolved symbol: request.get"
+  ],
+  "severity": "high"
 }
