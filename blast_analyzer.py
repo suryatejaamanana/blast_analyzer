@@ -128,6 +128,8 @@ class BlastRadiusAnalyzer:
                             )
                             context["methods"][node.name][item.name] = method_node
                             self.graph.add_edge(class_node, method_node, relation="CONTAINS")
+                            # Class changes should propagate into method-level dependencies.
+                            self.graph.add_edge(class_node, method_node, relation="DEPENDS_ON")
                             if is_api:
                                 self._add_api_node(module_name, item.name, parent_class=node.name)
 
@@ -193,16 +195,23 @@ class BlastRadiusAnalyzer:
             if isinstance(child, ast.Call):
                 self._handle_call(module_name, callable_node, child, current_class)
             elif isinstance(child, ast.Assign):
-                self._handle_assign(module_name, callable_node, child)
+                self._handle_assign(module_name, callable_node, child, current_class=current_class)
             elif isinstance(child, ast.AnnAssign):
-                self._handle_ann_assign(module_name, callable_node, child)
+                self._handle_ann_assign(module_name, callable_node, child, current_class=current_class)
             elif isinstance(child, ast.AugAssign):
-                self._handle_aug_assign(module_name, callable_node, child)
+                self._handle_aug_assign(module_name, callable_node, child, current_class=current_class)
             elif isinstance(child, ast.Attribute):
                 if isinstance(child.ctx, ast.Load):
                     data_node = self._data_node_id(self._expr_text(child))
                     self.graph.add_node(data_node, type="data_entity", name=self._expr_text(child), module=module_name)
                     self.graph.add_edge(callable_node, data_node, relation="READS")
+                    if (
+                        current_class
+                        and isinstance(child.value, ast.Name)
+                        and child.value.id == "self"
+                    ):
+                        class_node = self._class_node_id(module_name, current_class)
+                        self.graph.add_edge(class_node, data_node, relation="READS")
             elif isinstance(child, ast.Return) and child.value is not None:
                 returned = self._resolve_expression(module_name, child.value, current_class=current_class)
                 if returned:
@@ -234,22 +243,53 @@ class BlastRadiusAnalyzer:
         self.graph.add_edge(callable_node, ext_node, relation="CALLS")
         self.unknown_impact_zones.add(f"Unresolved symbol: {name_hint}")
 
-    def _handle_assign(self, module_name: str, callable_node: str, assign_node: ast.Assign) -> None:
+    def _handle_assign(
+        self,
+        module_name: str,
+        callable_node: str,
+        assign_node: ast.Assign,
+        current_class: Optional[str],
+    ) -> None:
         for target in assign_node.targets:
-            self._add_write_edge(module_name, callable_node, target)
+            self._add_write_edge(module_name, callable_node, target, current_class=current_class)
 
-    def _handle_ann_assign(self, module_name: str, callable_node: str, assign_node: ast.AnnAssign) -> None:
-        self._add_write_edge(module_name, callable_node, assign_node.target)
+    def _handle_ann_assign(
+        self,
+        module_name: str,
+        callable_node: str,
+        assign_node: ast.AnnAssign,
+        current_class: Optional[str],
+    ) -> None:
+        self._add_write_edge(module_name, callable_node, assign_node.target, current_class=current_class)
 
-    def _handle_aug_assign(self, module_name: str, callable_node: str, assign_node: ast.AugAssign) -> None:
-        self._add_write_edge(module_name, callable_node, assign_node.target)
+    def _handle_aug_assign(
+        self,
+        module_name: str,
+        callable_node: str,
+        assign_node: ast.AugAssign,
+        current_class: Optional[str],
+    ) -> None:
+        self._add_write_edge(module_name, callable_node, assign_node.target, current_class=current_class)
 
-    def _add_write_edge(self, module_name: str, callable_node: str, target: ast.AST) -> None:
+    def _add_write_edge(
+        self,
+        module_name: str,
+        callable_node: str,
+        target: ast.AST,
+        current_class: Optional[str],
+    ) -> None:
         if isinstance(target, ast.Attribute):
             field_name = self._expr_text(target)
             data_node = self._data_node_id(field_name)
             self.graph.add_node(data_node, type="data_entity", name=field_name, module=module_name)
             self.graph.add_edge(callable_node, data_node, relation="WRITES")
+            if (
+                current_class
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+            ):
+                class_node = self._class_node_id(module_name, current_class)
+                self.graph.add_edge(class_node, data_node, relation="WRITES")
 
     def _resolve_expression(
         self, module_name: str, expr: ast.AST, current_class: Optional[str]

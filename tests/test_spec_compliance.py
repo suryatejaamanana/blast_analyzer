@@ -160,6 +160,31 @@ class SpecComplianceTests(unittest.TestCase):
 
         self.assertEqual(path, [target, caller])
 
+    def test_data_model_class_links_to_data_entities(self) -> None:
+        graph = self.analyzer.graph
+        user_class = "class:models.user_model.User"
+        username_field = "data:self.username"
+        age_field = "data:self.age"
+
+        self.assertTrue(graph.has_edge(user_class, username_field))
+        self.assertEqual(graph[user_class][username_field]["relation"], "WRITES")
+        self.assertTrue(graph.has_edge(user_class, age_field))
+        self.assertEqual(graph[user_class][age_field]["relation"], "WRITES")
+
+    def test_data_model_change_directly_impacts_model_fields(self) -> None:
+        intent, target = self.analyzer.validate_and_normalize_intent(
+            {
+                "change_type": "data_model_change",
+                "target": "User",
+                "modification": "add field",
+            }
+        )
+        report = self.analyzer.generate_report(intent, target)
+        direct_ids = {item["component"] for item in report["direct_impacts"]}
+
+        self.assertIn("data:self.username", direct_ids)
+        self.assertIn("data:self.age", direct_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
