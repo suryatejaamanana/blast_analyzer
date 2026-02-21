@@ -12,6 +12,13 @@ defined_functions = set()
 
 def parse_file(filepath):
     module_name = filepath.replace(PROJECT_PATH + "/", "").replace(".py", "")
+
+    # Add module as node
+    source_graph.add_node(
+        module_name,
+        type="module"
+    )
+
     with open(filepath, "r") as file:
         tree = ast.parse(file.read())
 
@@ -30,16 +37,64 @@ def parse_file(filepath):
                 params=params
             )
 
+            # Module → Function containment
+            source_graph.add_edge(module_name, node.name, relation="contains")
+
+
             # Detect calls inside function
             for child in ast.walk(node):
                 if isinstance(child, ast.Call):
                     if isinstance(child.func, ast.Name):
                         called_function = child.func.id
-                        source_graph.add_edge(node.name, called_function)
+                        
+                        if called_function in source_graph.nodes:
+                            if source_graph.nodes[called_function].get("type") == "class":
+                                source_graph.add_edge(
+                                    node.name,
+                                    called_function,
+                                    relation="data_flow"
+                                )
+                            else:
+                                source_graph.add_edge(
+                                    node.name,
+                                    called_function,
+                                    relation="calls"
+                                )
+                        else:
+                            source_graph.add_edge(
+                                node.name,
+                                called_function,
+                                relation="external"
+                            )
+
+
+                        # If class → data flow
+                        if called_function in source_graph.nodes:
+                            if source_graph.nodes[called_function].get("type") == "class":
+                                source_graph.add_edge(
+                                    node.name,
+                                    called_function,
+                                    relation="data_flow"
+                                )
+                            else:
+                                source_graph.add_edge(
+                                    node.name,
+                                    called_function,
+                                    relation="calls"
+                                )
+                        else:
+                            source_graph.add_edge(
+                                node.name,
+                                called_function,
+                                relation="external"
+                            )
 
         # Add class nodes
         elif isinstance(node, ast.ClassDef):
             source_graph.add_node(node.name, type="class", module=module_name)
+
+            # Module → Class containment
+            source_graph.add_edge(module_name, node.name, relation="contains")
 
 def scan_project():
     for root, dirs, files in os.walk(PROJECT_PATH):
@@ -100,7 +155,8 @@ def generate_explanation(target, forward, reverse):
     report = []
 
     for node in forward.union(reverse):
-        if node not in source_graph:
+        node_data = source_graph.nodes[node]
+        if source_graph.nodes[node].get("type") == "module":
             continue
 
         node_data = source_graph.nodes[node]
@@ -112,12 +168,25 @@ def generate_explanation(target, forward, reverse):
             impact_type = "Root Change"
 
         elif node in forward:
-            reason = f"Depends on '{target}' directly or indirectly"
-            impact_type = "Downstream Impact"
+                
+             edge_data = source_graph.get_edge_data(target, node)
+             relation = edge_data.get("relation") if edge_data else None
+                
+             if relation == "data_flow":
+                impact_type = "Data Handling Impact"
+                reason = f"Data structure dependency from '{target}'"
+                
+             elif relation == "calls":
+                 impact_type = "Business Logic Impact"
+                 reason = f"Function call dependency from '{target}'"
+                
+             else:
+                 impact_type = "Downstream Impact"
+                 reason = f"Indirect dependency from '{target}'"
 
         elif node in reverse:
-            reason = f"Calls or references '{target}'"
-            impact_type = "Upstream Impact"
+                impact_type = "API / Caller Impact"
+                reason = f"Calls or depends on '{target}'"
 
         else:
             reason = "Indirect relationship"
@@ -222,14 +291,13 @@ def detect_unknown_zones():
     return unknown
 
 def detect_external_calls():
-    external = []
-
-    for edge in source_graph.edges():
-        target = edge[1]
-        if target not in defined_functions:
-            external.append(target)
-
-    return list(set(external))
+        external = []
+    
+        for u, v, data in source_graph.edges(data=True):
+            if data.get("relation") == "external":
+                external.append(v)
+    
+        return list(set(external))
 
 if __name__ == "__main__":
 
@@ -269,9 +337,11 @@ if __name__ == "__main__":
     forward = analyze_blast_radius(target)
     reverse = analyze_reverse_dependencies(target)
 
-    if forward and reverse:
+    if not forward and not reverse:
+        print("\nNo impacted components found.")
+        exit()
 
-        explanation_report = generate_explanation(target, forward, reverse)
+    explanation_report = generate_explanation(target, forward, reverse)
 
     print("\n==============================")
     print(" BLAST RADIUS REPORT")
@@ -330,4 +400,12 @@ if __name__ == "__main__":
         print("\n⚠ CONTRACT BREAKING CHANGE DETECTED")
         print("Reason: API contract or public interface modified")
 
-   
+    print("\n=== Impact Summary ===")
+
+    api_impacted = any(item["layer"] == "API Layer" for item in explanation_report)
+    data_impacted = any(item["impact_type"] == "Data Handling Impact" for item in explanation_report)
+
+    print("API Impacted:", api_impacted)
+    print("Business Logic Impacted:", any(item["impact_type"] == "Business Logic Impact" for item in explanation_report))
+    print("Data Layer Impacted:", data_impacted)
+    print("External Dependencies Impacted:", bool(external_calls))

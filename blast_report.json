@@ -1,33 +1,45 @@
 {
     "change_intent": {
         "type": "REFACTOR",
-        "target": "save_user",
-        "description": " Refactor DB save logic"
+        "target": "User",
+        "description": "Modify user structure"
     },
     "impact": [
         {
-            "component": "save_user",
-            "layer": "Database Layer",
-            "impact_type": "Root Change",
-            "reason": "Target of change"
+            "component": "api/user_api",
+            "layer": "Unknown Layer",
+            "impact_type": "Upstream Impact",
+            "reason": "Calls or references 'User'"
         },
         {
             "component": "create_user",
             "layer": "Service Layer",
             "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'save_user'"
+            "reason": "Calls or references 'User'"
         },
         {
-            "component": "print",
-            "layer": "Unknown Layer",
-            "impact_type": "Downstream Impact",
-            "reason": "Depends on 'save_user' directly or indirectly"
+            "component": "User",
+            "layer": "Data Model Layer",
+            "impact_type": "Root Change",
+            "reason": "Target of change"
         },
         {
             "component": "post_user",
             "layer": "API Layer",
             "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'save_user'"
+            "reason": "Calls or references 'User'"
+        },
+        {
+            "component": "services/user_service",
+            "layer": "Unknown Layer",
+            "impact_type": "Upstream Impact",
+            "reason": "Calls or references 'User'"
+        },
+        {
+            "component": "models/user_model",
+            "layer": "Unknown Layer",
+            "impact_type": "Upstream Impact",
+            "reason": "Calls or references 'User'"
         }
     ]
 }
