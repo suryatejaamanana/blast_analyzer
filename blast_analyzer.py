@@ -123,6 +123,19 @@ def export_json_report(report, filename="blast_report.json"):
         json.dump(report, f, indent=4)
     print(f"\nJSON report exported to {filename}")
 
+def find_trace_paths(target):
+    paths = {}
+
+    for node in source_graph.nodes():
+        try:
+            for path in nx.all_simple_paths(source_graph, source=node, target=target):
+                if len(path) > 1:
+                    paths[node] = path
+        except:
+            continue
+
+    return paths
+
 if __name__ == "__main__":
 
     scan_project()
@@ -174,5 +187,12 @@ if forward and reverse:
         print("Risk Level: MEDIUM")
     else:
         print("Risk Level: LOW")
+
+    trace_paths = find_trace_paths(target)
+
+    print("\nTraceability Paths:\n")
+
+    for node, path in trace_paths.items():
+        print(" → ".join(path))
 
     export_json_report(explanation_report)
