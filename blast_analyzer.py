@@ -1,6 +1,7 @@
 import os
 import ast
 import networkx as nx
+import json
 
 PROJECT_PATH = "project"
 
@@ -8,6 +9,7 @@ source_graph = nx.DiGraph()
 
 
 def parse_file(filepath):
+    module_name = filepath.replace(PROJECT_PATH + "/", "").replace(".py", "")    
     with open(filepath, "r") as file:
         tree = ast.parse(file.read())
 
@@ -15,7 +17,7 @@ def parse_file(filepath):
 
         # Add function nodes
         if isinstance(node, ast.FunctionDef):
-            source_graph.add_node(node.name, type="function")
+            source_graph.add_node(node.name, type="function", module=module_name)
 
             # Detect calls inside function
             for child in ast.walk(node):
@@ -26,8 +28,7 @@ def parse_file(filepath):
 
         # Add class nodes
         elif isinstance(node, ast.ClassDef):
-            source_graph.add_node(node.name, type="class")
-
+            source_graph.add_node(node.name, type="class", module=module_name)
 
 def scan_project():
     for root, dirs, files in os.walk(PROJECT_PATH):
@@ -67,7 +68,60 @@ def analyze_reverse_dependencies(target):
 
     return impacted
 
+def classify_layer(module_path):
+    if module_path.startswith("api"):
+        return "API Layer"
+    elif module_path.startswith("services"):
+        return "Service Layer"
+    elif module_path.startswith("models"):
+        return "Data Model Layer"
+    elif module_path.startswith("database"):
+        return "Database Layer"
+    elif module_path.startswith("utils"):
+        return "Utility Layer"
+    else:
+        return "Unknown Layer"
 
+def generate_explanation(target, forward, reverse):
+    report = []
+
+    for node in forward.union(reverse):
+        if node not in source_graph:
+            continue
+
+        node_data = source_graph.nodes[node]
+        module = node_data.get("module", "unknown")
+        layer = classify_layer(module)
+
+        if node == target:
+            reason = "Target of change"
+            impact_type = "Root Change"
+
+        elif node in forward:
+            reason = f"Depends on '{target}' directly or indirectly"
+            impact_type = "Downstream Impact"
+
+        elif node in reverse:
+            reason = f"Calls or references '{target}'"
+            impact_type = "Upstream Impact"
+
+        else:
+            reason = "Indirect relationship"
+            impact_type = "Indirect Impact"
+
+        report.append({
+            "component": node,
+            "layer": layer,
+            "impact_type": impact_type,
+            "reason": reason
+        })
+
+    return report
+
+def export_json_report(report, filename="blast_report.json"):
+    with open(filename, "w") as f:
+        json.dump(report, f, indent=4)
+    print(f"\nJSON report exported to {filename}")
 
 if __name__ == "__main__":
 
@@ -96,20 +150,29 @@ if __name__ == "__main__":
     forward = analyze_blast_radius(target)
     reverse = analyze_reverse_dependencies(target)
 
-    impacted_nodes = forward.union(reverse)
+if forward and reverse:
 
-    if impacted_nodes:
-        print("\nImpacted Components:")
-        for node in impacted_nodes:
-            print(" -", node)
+    explanation_report = generate_explanation(target, forward, reverse)
 
-        print("\nImpact Summary:")
-        count = len(impacted_nodes)
+    print("\nDetailed Impact Report:\n")
 
-        if count >= 5:
-            print(" Risk Level: HIGH")
-        elif count >= 3:
-            print(" Risk Level: MEDIUM")
-        else:
-            print(" Risk Level: LOW")
+    for item in explanation_report:
+        print("----------------------------------")
+        print("Component   :", item["component"])
+        print("Layer       :", item["layer"])
+        print("Impact Type :", item["impact_type"])
+        print("Reason      :", item["reason"])
 
+    total = len(explanation_report)
+
+    print("\n----------------------------------")
+    print("Total Impacted Components:", total)
+
+    if total >= 6:
+        print("Risk Level: HIGH")
+    elif total >= 3:
+        print("Risk Level: MEDIUM")
+    else:
+        print("Risk Level: LOW")
+
+    export_json_report(explanation_report)

@@ -1,0 +1,26 @@
+[
+    {
+        "component": "post_user",
+        "layer": "API Layer",
+        "impact_type": "Upstream Impact",
+        "reason": "Calls or references 'print'"
+    },
+    {
+        "component": "save_user",
+        "layer": "Database Layer",
+        "impact_type": "Upstream Impact",
+        "reason": "Calls or references 'print'"
+    },
+    {
+        "component": "create_user",
+        "layer": "Service Layer",
+        "impact_type": "Upstream Impact",
+        "reason": "Calls or references 'print'"
+    },
+    {
+        "component": "print",
+        "layer": "Unknown Layer",
+        "impact_type": "Root Change",
+        "reason": "Target of change"
+    }
+]
