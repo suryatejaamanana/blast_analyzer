@@ -1,20 +1,38 @@
 [
     {
-        "component": "validate_user",
-        "layer": "Utility Layer",
+        "component": "create_user",
+        "layer": "Service Layer",
         "impact_type": "Root Change",
         "reason": "Target of change"
     },
     {
-        "component": "create_user",
-        "layer": "Service Layer",
-        "impact_type": "Upstream Impact",
-        "reason": "Calls or references 'validate_user'"
+        "component": "User",
+        "layer": "Data Model Layer",
+        "impact_type": "Downstream Impact",
+        "reason": "Depends on 'create_user' directly or indirectly"
+    },
+    {
+        "component": "print",
+        "layer": "Unknown Layer",
+        "impact_type": "Downstream Impact",
+        "reason": "Depends on 'create_user' directly or indirectly"
     },
     {
         "component": "post_user",
         "layer": "API Layer",
         "impact_type": "Upstream Impact",
-        "reason": "Calls or references 'validate_user'"
+        "reason": "Calls or references 'create_user'"
+    },
+    {
+        "component": "validate_user",
+        "layer": "Utility Layer",
+        "impact_type": "Downstream Impact",
+        "reason": "Depends on 'create_user' directly or indirectly"
+    },
+    {
+        "component": "save_user",
+        "layer": "Database Layer",
+        "impact_type": "Downstream Impact",
+        "reason": "Depends on 'create_user' directly or indirectly"
     }
 ]

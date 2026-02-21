@@ -17,7 +17,14 @@ def parse_file(filepath):
 
         # Add function nodes
         if isinstance(node, ast.FunctionDef):
-            source_graph.add_node(node.name, type="function", module=module_name)
+            params = [arg.arg for arg in node.args.args]
+
+            source_graph.add_node(
+                node.name,
+                type="function",
+                module=module_name,
+                params=params
+            )            
 
             # Detect calls inside function
             for child in ast.walk(node):
@@ -136,6 +143,17 @@ def find_trace_paths(target):
 
     return paths
 
+def detect_contract_break(target):
+    node_data = source_graph.nodes[target]
+    params = node_data.get("params", [])
+
+    callers = list(source_graph.predecessors(target))
+
+    if len(params) > 2 and callers:
+        return True
+
+    return False
+
 if __name__ == "__main__":
 
     scan_project()
@@ -194,5 +212,8 @@ if forward and reverse:
 
     for node, path in trace_paths.items():
         print(" → ".join(path))
+
+    if detect_contract_break(target):
+        print("\n⚠ Potential Contract Breaking Change Detected")
 
     export_json_report(explanation_report)
