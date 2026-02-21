@@ -17,7 +17,16 @@ SUPPORTED_CHANGE_TYPES = {
     "data_model_change",
 }
 
-BREAKING_KEYWORDS = {"remove", "rename", "add_required", "required"}
+CONTRACT_BREAK_PATTERNS = (
+    "remove",
+    "rename",
+    "change type",
+    "make required",
+    "add required",
+    "required",
+    "delete",
+    "change signature",
+)
 DEPENDENCY_RELATIONS = {"CALLS", "DEPENDS_ON", "INHERITS", "READS", "WRITES", "RETURNS"}
 
 
@@ -521,8 +530,8 @@ class BlastRadiusAnalyzer:
     def _is_contract_break(self, intent: ChangeIntent) -> bool:
         if intent.change_type != "api_modification":
             return False
-        text = intent.modification.replace(" ", "_")
-        return any(keyword in text for keyword in BREAKING_KEYWORDS)
+        mod = intent.modification.lower().replace("_", " ").replace("-", " ")
+        return any(pattern in mod for pattern in CONTRACT_BREAK_PATTERNS)
 
     def _risk_areas(
         self,

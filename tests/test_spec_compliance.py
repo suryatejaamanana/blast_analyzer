@@ -116,6 +116,40 @@ class SpecComplianceTests(unittest.TestCase):
         report = self.analyzer.generate_report(intent, target)
         self.assertTrue(any("contract-breaking" in risk.lower() for risk in report["risk_areas"]))
 
+    def test_contract_break_risk_for_signature_or_type_changes(self) -> None:
+        for modification in ("change signature", "change type of age to string", "delete response field"):
+            intent, target = self.analyzer.validate_and_normalize_intent(
+                {
+                    "change_type": "api_modification",
+                    "target": "post_user",
+                    "modification": modification,
+                }
+            )
+            report = self.analyzer.generate_report(intent, target)
+            self.assertTrue(any("contract-breaking" in risk.lower() for risk in report["risk_areas"]))
+
+    def test_no_contract_break_for_optional_api_addition(self) -> None:
+        intent, target = self.analyzer.validate_and_normalize_intent(
+            {
+                "change_type": "api_modification",
+                "target": "post_user",
+                "modification": "add optional field nickname",
+            }
+        )
+        report = self.analyzer.generate_report(intent, target)
+        self.assertFalse(any("contract-breaking" in risk.lower() for risk in report["risk_areas"]))
+
+    def test_no_contract_break_for_non_api_change_even_with_breaking_words(self) -> None:
+        intent, target = self.analyzer.validate_and_normalize_intent(
+            {
+                "change_type": "function_logic_change",
+                "target": "create_user",
+                "modification": "change signature",
+            }
+        )
+        report = self.analyzer.generate_report(intent, target)
+        self.assertFalse(any("contract-breaking" in risk.lower() for risk in report["risk_areas"]))
+
     def test_markdown_output_contains_sections(self) -> None:
         intent, target = self.analyzer.validate_and_normalize_intent(
             {
