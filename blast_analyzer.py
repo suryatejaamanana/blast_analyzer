@@ -514,6 +514,8 @@ class BlastRadiusAnalyzer:
         for src, dst, edge in self.graph.edges(data=True):
             relation = edge.get("relation")
             if relation in DEPENDENCY_RELATIONS:
+                if self.graph.nodes[dst].get("type") == "external":
+                    continue
                 dep_graph.add_edge(src, dst, relation=relation)
         return dep_graph
 

@@ -118,6 +118,26 @@ class SpecComplianceTests(unittest.TestCase):
         self.assertIn("unknown_impact_zones", report)
         self.assertGreaterEqual(len(report["unknown_impact_zones"]), 1)
 
+    def test_external_nodes_excluded_from_blast_radius(self) -> None:
+        ext_nodes = {
+            node_id
+            for node_id, data in self.analyzer.graph.nodes(data=True)
+            if data.get("type") == "external"
+        }
+        self.assertGreater(len(ext_nodes), 0)
+
+        intent, target = self.analyzer.validate_and_normalize_intent(
+            {
+                "change_type": "function_logic_change",
+                "target": "function:services.user_service.create_user",
+                "modification": "adjust validation flow",
+            }
+        )
+        report = self.analyzer.generate_report(intent, target)
+        impacted = {item["component"] for item in report["direct_impacts"] + report["indirect_impacts"]}
+
+        self.assertTrue(ext_nodes.isdisjoint(impacted))
+
     def test_contract_break_risk_for_breaking_api_change(self) -> None:
         intent, target = self.analyzer.validate_and_normalize_intent(
             {

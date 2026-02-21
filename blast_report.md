@@ -6,17 +6,16 @@
 - Modification: `adjust validation flow`
 
 ## Direct Impacts
-- `class:models.user_model.User` (Data Handling): Immediate dependency/caller path: create_user -> User
-- `function:api.user_api.post_user` (API-Level): Immediate dependency/caller path: post_user -> create_user
-- `function:database.db.save_user` (Business Logic): Immediate dependency/caller path: create_user -> save_user
-- `function:utils.validation.validate_user` (Business Logic): Immediate dependency/caller path: create_user -> validate_user
+- `class:models.user_model.User` (Data Handling): Impact propagates via relations [DEPENDS_ON] along path: create_user -> User
+- `function:api.user_api.post_user` (API-Level): Impact propagates via relations [CALLS] along path: create_user -> post_user
+- `function:database.db.save_user` (Business Logic): Impact propagates via relations [CALLS] along path: create_user -> save_user
+- `function:utils.validation.validate_user` (Business Logic): Impact propagates via relations [CALLS] along path: create_user -> validate_user
 
 ## Indirect Impacts
-- `api:api.user_api.post_user` (API-Level): Transitive dependency path: post_user [API] -> post_user -> create_user
-- `data:request.get` (Data Handling): Transitive dependency path: create_user -> post_user -> request.get
-- `data:user.username` (Data Handling): Transitive dependency path: create_user -> save_user -> user.username
-- `external:print` (Business Logic): Transitive dependency path: create_user -> save_user -> print
-- `external:request.get` (Business Logic): Transitive dependency path: create_user -> post_user -> request.get
+- `data:self.age` (Data Handling): Impact propagates via relations [DEPENDS_ON -> WRITES] along path: create_user -> User -> self.age
+- `data:self.username` (Data Handling): Impact propagates via relations [DEPENDS_ON -> WRITES] along path: create_user -> User -> self.username
+- `data:user.username` (Data Handling): Impact propagates via relations [CALLS -> READS] along path: create_user -> save_user -> user.username
+- `function:models.user_model.User.__init__` (Business Logic): Impact propagates via relations [DEPENDS_ON -> DEPENDS_ON] along path: create_user -> User -> __init__
 
 ## Risk Zones
 - Unknown Impact Zone: unresolved symbols or dynamic behavior detected.

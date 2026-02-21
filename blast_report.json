@@ -20,7 +20,7 @@
         "function:services.user_service.create_user",
         "class:models.user_model.User"
       ],
-      "reason": "Immediate dependency/caller path: create_user -> User"
+      "reason": "Impact propagates via relations [DEPENDS_ON] along path: create_user -> User"
     },
     {
       "component": "function:api.user_api.post_user",
@@ -33,10 +33,10 @@
         "CALLS"
       ],
       "path": [
-        "function:api.user_api.post_user",
-        "function:services.user_service.create_user"
+        "function:services.user_service.create_user",
+        "function:api.user_api.post_user"
       ],
-      "reason": "Immediate dependency/caller path: post_user -> create_user"
+      "reason": "Impact propagates via relations [CALLS] along path: create_user -> post_user"
     },
     {
       "component": "function:database.db.save_user",
@@ -52,7 +52,7 @@
         "function:services.user_service.create_user",
         "function:database.db.save_user"
       ],
-      "reason": "Immediate dependency/caller path: create_user -> save_user"
+      "reason": "Impact propagates via relations [CALLS] along path: create_user -> save_user"
     },
     {
       "component": "function:utils.validation.validate_user",
@@ -68,45 +68,45 @@
         "function:services.user_service.create_user",
         "function:utils.validation.validate_user"
       ],
-      "reason": "Immediate dependency/caller path: create_user -> validate_user"
+      "reason": "Impact propagates via relations [CALLS] along path: create_user -> validate_user"
     }
   ],
   "indirect_impacts": [
     {
-      "component": "api:api.user_api.post_user",
-      "name": "post_user [API]",
-      "component_type": "api",
-      "module": "api.user_api",
-      "impact_type": "Indirect",
-      "category": "API-Level",
-      "dependency_types": [
-        "DEPENDS_ON",
-        "CALLS"
-      ],
-      "path": [
-        "api:api.user_api.post_user",
-        "function:api.user_api.post_user",
-        "function:services.user_service.create_user"
-      ],
-      "reason": "Transitive dependency path: post_user [API] -> post_user -> create_user"
-    },
-    {
-      "component": "data:request.get",
-      "name": "request.get",
+      "component": "data:self.age",
+      "name": "self.age",
       "component_type": "data_entity",
-      "module": "api.user_api",
+      "module": "models.user_model",
       "impact_type": "Indirect",
       "category": "Data Handling",
       "dependency_types": [
-        "CALLS",
-        "READS"
+        "DEPENDS_ON",
+        "WRITES"
       ],
       "path": [
         "function:services.user_service.create_user",
-        "function:api.user_api.post_user",
-        "data:request.get"
+        "class:models.user_model.User",
+        "data:self.age"
       ],
-      "reason": "Transitive dependency path: create_user -> post_user -> request.get"
+      "reason": "Impact propagates via relations [DEPENDS_ON -> WRITES] along path: create_user -> User -> self.age"
+    },
+    {
+      "component": "data:self.username",
+      "name": "self.username",
+      "component_type": "data_entity",
+      "module": "models.user_model",
+      "impact_type": "Indirect",
+      "category": "Data Handling",
+      "dependency_types": [
+        "DEPENDS_ON",
+        "WRITES"
+      ],
+      "path": [
+        "function:services.user_service.create_user",
+        "class:models.user_model.User",
+        "data:self.username"
+      ],
+      "reason": "Impact propagates via relations [DEPENDS_ON -> WRITES] along path: create_user -> User -> self.username"
     },
     {
       "component": "data:user.username",
@@ -124,43 +124,25 @@
         "function:database.db.save_user",
         "data:user.username"
       ],
-      "reason": "Transitive dependency path: create_user -> save_user -> user.username"
+      "reason": "Impact propagates via relations [CALLS -> READS] along path: create_user -> save_user -> user.username"
     },
     {
-      "component": "external:print",
-      "name": "print",
-      "component_type": "external",
-      "module": "external",
+      "component": "function:models.user_model.User.__init__",
+      "name": "__init__",
+      "component_type": "function",
+      "module": "models.user_model",
       "impact_type": "Indirect",
       "category": "Business Logic",
       "dependency_types": [
-        "CALLS",
-        "CALLS"
+        "DEPENDS_ON",
+        "DEPENDS_ON"
       ],
       "path": [
         "function:services.user_service.create_user",
-        "function:database.db.save_user",
-        "external:print"
+        "class:models.user_model.User",
+        "function:models.user_model.User.__init__"
       ],
-      "reason": "Transitive dependency path: create_user -> save_user -> print"
-    },
-    {
-      "component": "external:request.get",
-      "name": "request.get",
-      "component_type": "external",
-      "module": "external",
-      "impact_type": "Indirect",
-      "category": "Business Logic",
-      "dependency_types": [
-        "CALLS",
-        "CALLS"
-      ],
-      "path": [
-        "function:services.user_service.create_user",
-        "function:api.user_api.post_user",
-        "external:request.get"
-      ],
-      "reason": "Transitive dependency path: create_user -> post_user -> request.get"
+      "reason": "Impact propagates via relations [DEPENDS_ON -> DEPENDS_ON] along path: create_user -> User -> __init__"
     }
   ],
   "risk_areas": [
