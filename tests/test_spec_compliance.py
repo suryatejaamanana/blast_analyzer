@@ -77,6 +77,19 @@ class SpecComplianceTests(unittest.TestCase):
             self.assertIsInstance(item["dependency_types"], list)
             self.assertIn(item["impact_type"], {"Direct", "Indirect"})
 
+    def test_reason_includes_causal_relation_chain_when_available(self) -> None:
+        intent, target = self.analyzer.validate_and_normalize_intent(
+            {
+                "change_type": "function_logic_change",
+                "target": "create_user",
+                "modification": "adjust validation flow",
+            }
+        )
+        report = self.analyzer.generate_report(intent, target)
+
+        direct_reasons = [item["reason"] for item in report["direct_impacts"]]
+        self.assertTrue(any("Impact propagates via relations [" in reason for reason in direct_reasons))
+
     def test_report_has_spec_top_level_keys(self) -> None:
         intent, target = self.analyzer.validate_and_normalize_intent(
             {

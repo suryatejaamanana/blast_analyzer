@@ -445,11 +445,15 @@ class BlastRadiusAnalyzer:
         category = self._classify_category(node, dependency_types, intent, breaking_contract)
 
         node_data = self.graph.nodes[node]
-        reason = " -> ".join(self.graph.nodes[p].get("name", p) for p in path)
-        if impact_type == "Direct":
-            reason = f"Immediate dependency/caller path: {reason}"
+        path_display = " -> ".join(self.graph.nodes[p].get("name", p) for p in path)
+        relation_chain = " -> ".join(dependency_types)
+        if relation_chain:
+            reason = (
+                f"Impact propagates via relations [{relation_chain}] "
+                f"along path: {path_display}"
+            )
         else:
-            reason = f"Transitive dependency path: {reason}"
+            reason = f"Impact propagates along path: {path_display}"
 
         return {
             "component": node,
