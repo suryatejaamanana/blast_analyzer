@@ -9,7 +9,7 @@ source_graph = nx.DiGraph()
 
 
 def parse_file(filepath):
-    module_name = filepath.replace(PROJECT_PATH + "/", "").replace(".py", "")    
+    module_name = filepath.replace(PROJECT_PATH + "/", "").replace(".py", "")
     with open(filepath, "r") as file:
         tree = ast.parse(file.read())
 
@@ -24,7 +24,7 @@ def parse_file(filepath):
                 type="function",
                 module=module_name,
                 params=params
-            )            
+            )
 
             # Detect calls inside function
             for child in ast.walk(node):
@@ -154,6 +154,35 @@ def detect_contract_break(target):
 
     return False
 
+def get_change_intent():
+    print("\nEnter Change Type:")
+    print("1. API_CHANGE")
+    print("2. VALIDATION_CHANGE")
+    print("3. REFACTOR")
+
+    choice = input("Select (1/2/3): ")
+
+    change_types = {
+        "1": "API_CHANGE",
+        "2": "VALIDATION_CHANGE",
+        "3": "REFACTOR"
+    }
+
+    change_type = change_types.get(choice)
+
+    if not change_type:
+        print("Invalid choice.")
+        return None
+
+    target = input("Enter target function name: ")
+    description = input("Describe the change: ")
+
+    return {
+        "type": change_type,
+        "target": target,
+        "description": description
+    }
+
 if __name__ == "__main__":
 
     scan_project()
@@ -172,18 +201,32 @@ if __name__ == "__main__":
     for edge in source_graph.edges():
         print(edge[0], "→", edge[1])
 
-    print("\n==============================")
-    print(" BLAST RADIUS ANALYSIS")
-    print("==============================")
+print("\n==============================")
+print(" CHANGE INTENT INPUT")
+print("==============================")
 
-    target = input("\nEnter function name to analyze: ")
+change_intent = get_change_intent()
 
-    forward = analyze_blast_radius(target)
-    reverse = analyze_reverse_dependencies(target)
+if not change_intent:
+    exit()
+
+target = change_intent["target"]
+change_type = change_intent["type"]
+
+forward = analyze_blast_radius(target)
+reverse = analyze_reverse_dependencies(target)
 
 if forward and reverse:
 
     explanation_report = generate_explanation(target, forward, reverse)
+
+    print("\n==============================")
+    print(" BLAST RADIUS REPORT")
+    print("==============================")
+
+    print("\nChange Type:", change_type)
+    print("Target:", target)
+    print("Description:", change_intent["description"])
 
     print("\nDetailed Impact Report:\n")
 
@@ -199,12 +242,20 @@ if forward and reverse:
     print("\n----------------------------------")
     print("Total Impacted Components:", total)
 
+    if change_type == "API_CHANGE":
+        print("Contract Compatibility: CHECK REQUIRED")
+
     if total >= 6:
         print("Risk Level: HIGH")
     elif total >= 3:
         print("Risk Level: MEDIUM")
     else:
         print("Risk Level: LOW")
+
+    export_json_report({
+        "change_intent": change_intent,
+        "impact": explanation_report
+    })
 
     trace_paths = find_trace_paths(target)
 
@@ -216,4 +267,3 @@ if forward and reverse:
     if detect_contract_break(target):
         print("\n⚠ Potential Contract Breaking Change Detected")
 
-    export_json_report(explanation_report)
