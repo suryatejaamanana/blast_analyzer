@@ -90,9 +90,19 @@ class BlastRadiusAnalyzer:
             for node in tree.body:
                 if isinstance(node, ast.FunctionDef):
                     fn_node = self._function_node_id(module_name, node.name)
-                    self._add_function_node(fn_node, module_name, node.name, node.args.args, parent_class=None)
+                    is_api = module_name.startswith("api.") or self._has_api_decorator(node)
+                    self._add_function_node(
+                        fn_node,
+                        module_name,
+                        node.name,
+                        node.args.args,
+                        parent_class=None,
+                        is_api=is_api,
+                    )
                     context["functions"][node.name] = fn_node
                     self.graph.add_edge(module_node, fn_node, relation="CONTAINS")
+                    if is_api:
+                        self._add_api_node(module_name, node.name, parent_class=None)
 
                 elif isinstance(node, ast.ClassDef):
                     class_node = self._class_node_id(module_name, node.name)
@@ -107,15 +117,19 @@ class BlastRadiusAnalyzer:
                     for item in node.body:
                         if isinstance(item, ast.FunctionDef):
                             method_node = self._function_node_id(module_name, item.name, parent_class=node.name)
+                            is_api = module_name.startswith("api.") or self._has_api_decorator(item)
                             self._add_function_node(
                                 method_node,
                                 module_name,
                                 item.name,
                                 item.args.args,
                                 parent_class=node.name,
+                                is_api=is_api,
                             )
                             context["methods"][node.name][item.name] = method_node
                             self.graph.add_edge(class_node, method_node, relation="CONTAINS")
+                            if is_api:
+                                self._add_api_node(module_name, item.name, parent_class=node.name)
 
     def _second_pass(self) -> None:
         for module_name, tree in self.module_trees.items():
@@ -296,8 +310,10 @@ class BlastRadiusAnalyzer:
         module_name = target_data.get("module", "")
 
         if intent.change_type == "api_modification":
-            if node_type != "function" or not module_name.startswith("api."):
-                raise ValueError("api_modification must target a function in an API module.")
+            if node_type == "api":
+                pass
+            elif node_type != "function" or not self._is_api_function(target_data):
+                raise ValueError("api_modification must target an API function.")
         elif intent.change_type == "validation_rule_change":
             if node_type != "function":
                 raise ValueError("validation_rule_change must target a function.")
@@ -403,9 +419,6 @@ class BlastRadiusAnalyzer:
             return nx.shortest_path(dep_graph, source=target_node, target=node)
         if nx.has_path(dep_graph, node, target_node):
             return nx.shortest_path(dep_graph, source=node, target=target_node)
-        undirected = dep_graph.to_undirected()
-        if nx.has_path(undirected, target_node, node):
-            return nx.shortest_path(undirected, source=target_node, target=node)
         return [target_node, node]
 
     def _path_relations(self, path: List[str]) -> List[str]:
@@ -435,7 +448,7 @@ class BlastRadiusAnalyzer:
             return "Test Impact"
         if node_type in {"class", "data_entity"} or any(r in {"READS", "WRITES"} for r in dependency_types):
             return "Data Handling"
-        if module.startswith("api."):
+        if node_type == "api" or module.startswith("api."):
             if breaking_contract and intent.change_type == "api_modification":
                 return "Contract Compatibility"
             return "API-Level"
@@ -462,8 +475,7 @@ class BlastRadiusAnalyzer:
             if current in related:
                 continue
             related.add(current)
-            neighbors = set(dep_graph.successors(current)).union(dep_graph.predecessors(current))
-            for neighbor in neighbors:
+            for neighbor in dep_graph.successors(current):
                 if neighbor not in related:
                     queue.append(neighbor)
         return related
@@ -557,6 +569,7 @@ class BlastRadiusAnalyzer:
         fn_name: str,
         args: Iterable[ast.arg],
         parent_class: Optional[str],
+        is_api: bool,
     ) -> None:
         params = [arg.arg for arg in args]
         self.graph.add_node(
@@ -566,8 +579,42 @@ class BlastRadiusAnalyzer:
             module=module_name,
             params=params,
             parent_class=parent_class,
+            is_api=is_api,
         )
         self.global_symbol_index[fn_name].add(node_id)
+
+    def _add_api_node(self, module_name: str, fn_name: str, parent_class: Optional[str]) -> None:
+        api_node_id = self._api_node_id(module_name, fn_name, parent_class)
+        function_node_id = self._function_node_id(module_name, fn_name, parent_class)
+        if api_node_id in self.graph:
+            return
+        display_name = f"{fn_name} [API]"
+        self.graph.add_node(api_node_id, type="api", name=display_name, module=module_name)
+        self.graph.add_edge(self._module_node_id(module_name), api_node_id, relation="CONTAINS")
+        self.graph.add_edge(api_node_id, function_node_id, relation="DEPENDS_ON")
+
+    def _has_api_decorator(self, fn_node: ast.FunctionDef) -> bool:
+        for decorator in fn_node.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            name = self._expr_text(target)
+            if self._decorator_is_api(name):
+                return True
+        return False
+
+    def _decorator_is_api(self, name: str) -> bool:
+        if not name:
+            return False
+        if name == "route" or name.endswith(".route"):
+            return True
+        verbs = {"get", "post", "put", "delete", "patch", "options", "head"}
+        last = name.split(".")[-1]
+        return last in verbs
+
+    def _is_api_function(self, node_data: Dict[str, Any]) -> bool:
+        if node_data.get("is_api"):
+            return True
+        module_name = node_data.get("module", "")
+        return module_name.startswith("api.")
 
     def _expr_text(self, expr: ast.AST) -> str:
         if isinstance(expr, ast.Name):
@@ -577,6 +624,11 @@ class BlastRadiusAnalyzer:
         if isinstance(expr, ast.Call):
             return self._expr_text(expr.func)
         return expr.__class__.__name__
+
+    def _api_node_id(self, module_name: str, fn_name: str, parent_class: Optional[str] = None) -> str:
+        if parent_class:
+            return f"api:{module_name}.{parent_class}.{fn_name}"
+        return f"api:{module_name}.{fn_name}"
 
 
 def _header(title: str) -> str:
@@ -749,8 +801,9 @@ def main() -> int:
     items_sorted = sorted(items, key=lambda item: item["name"])
     for item in items_sorted:
         module_name = item.get("module", "unknown")
+        component_type = item.get("component_type", "unknown")
         layer = "Unknown Layer"
-        if module_name.startswith("api."):
+        if component_type == "api" or module_name.startswith("api."):
             layer = "API Layer"
         elif module_name.startswith("services."):
             layer = "Service Layer"
@@ -778,7 +831,10 @@ def main() -> int:
         path_names = [analyzer.graph.nodes[n].get("name", n) for n in item["path"]]
         print(" → ".join(path_names))
 
-    api_impacted = any(item.get("module", "").startswith("api.") for item in items)
+    api_impacted = any(
+        item.get("component_type") == "api" or item.get("module", "").startswith("api.")
+        for item in items
+    )
     data_impacted = any(
         item.get("module", "").startswith("models.")
         or item.get("component_type") in {"class", "data_entity"}

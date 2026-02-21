@@ -132,6 +132,25 @@ class SpecComplianceTests(unittest.TestCase):
         self.assertIn("## Risk Zones", md)
         self.assertIn("## Severity:", md)
 
+    def test_api_nodes_detected_from_decorators(self) -> None:
+        api_nodes = {
+            node_id
+            for node_id, data in self.analyzer.graph.nodes(data=True)
+            if data.get("type") == "api"
+        }
+        self.assertIn("api:web.public.status", api_nodes)
+
+    def test_api_modification_accepts_decorated_function(self) -> None:
+        intent, target = self.analyzer.validate_and_normalize_intent(
+            {
+                "change_type": "api_modification",
+                "target": "status",
+                "modification": "adjust response shape",
+            }
+        )
+        self.assertTrue(intent.change_type)
+        self.assertTrue(target in self.analyzer.graph)
+
 
 if __name__ == "__main__":
     unittest.main()

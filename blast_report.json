@@ -73,6 +73,24 @@
   ],
   "indirect_impacts": [
     {
+      "component": "api:api.user_api.post_user",
+      "name": "post_user [API]",
+      "component_type": "api",
+      "module": "api.user_api",
+      "impact_type": "Indirect",
+      "category": "API-Level",
+      "dependency_types": [
+        "DEPENDS_ON",
+        "CALLS"
+      ],
+      "path": [
+        "api:api.user_api.post_user",
+        "function:api.user_api.post_user",
+        "function:services.user_service.create_user"
+      ],
+      "reason": "Transitive dependency path: post_user [API] -> post_user -> create_user"
+    },
+    {
       "component": "data:request.get",
       "name": "request.get",
       "component_type": "data_entity",
@@ -150,6 +168,7 @@
     "Unknown test coverage for impacted components."
   ],
   "unknown_impact_zones": [
+    "Unresolved symbol: app.route",
     "Unresolved symbol: print",
     "Unresolved symbol: request.get"
   ],

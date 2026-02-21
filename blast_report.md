@@ -12,6 +12,7 @@
 - `function:utils.validation.validate_user` (Business Logic): Immediate dependency/caller path: create_user -> validate_user
 
 ## Indirect Impacts
+- `api:api.user_api.post_user` (API-Level): Transitive dependency path: post_user [API] -> post_user -> create_user
 - `data:request.get` (Data Handling): Transitive dependency path: create_user -> post_user -> request.get
 - `data:user.username` (Data Handling): Transitive dependency path: create_user -> save_user -> user.username
 - `external:print` (Business Logic): Transitive dependency path: create_user -> save_user -> print
