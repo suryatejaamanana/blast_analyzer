@@ -1,45 +1,33 @@
 {
     "change_intent": {
-        "type": "API_CHANGE",
-        "target": "create_user",
-        "description": "Add required field email"
+        "type": "REFACTOR",
+        "target": "save_user",
+        "description": " Refactor DB save logic"
     },
     "impact": [
         {
-            "component": "create_user",
-            "layer": "Service Layer",
+            "component": "save_user",
+            "layer": "Database Layer",
             "impact_type": "Root Change",
             "reason": "Target of change"
         },
         {
-            "component": "save_user",
-            "layer": "Database Layer",
-            "impact_type": "Downstream Impact",
-            "reason": "Depends on 'create_user' directly or indirectly"
-        },
-        {
-            "component": "post_user",
-            "layer": "API Layer",
+            "component": "create_user",
+            "layer": "Service Layer",
             "impact_type": "Upstream Impact",
-            "reason": "Calls or references 'create_user'"
-        },
-        {
-            "component": "User",
-            "layer": "Data Model Layer",
-            "impact_type": "Downstream Impact",
-            "reason": "Depends on 'create_user' directly or indirectly"
-        },
-        {
-            "component": "validate_user",
-            "layer": "Utility Layer",
-            "impact_type": "Downstream Impact",
-            "reason": "Depends on 'create_user' directly or indirectly"
+            "reason": "Calls or references 'save_user'"
         },
         {
             "component": "print",
             "layer": "Unknown Layer",
             "impact_type": "Downstream Impact",
-            "reason": "Depends on 'create_user' directly or indirectly"
+            "reason": "Depends on 'save_user' directly or indirectly"
+        },
+        {
+            "component": "post_user",
+            "layer": "API Layer",
+            "impact_type": "Upstream Impact",
+            "reason": "Calls or references 'save_user'"
         }
     ]
 }

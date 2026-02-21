@@ -3,10 +3,12 @@ import ast
 import networkx as nx
 import json
 
+
 PROJECT_PATH = "project"
 
 source_graph = nx.DiGraph()
 
+defined_functions = set()
 
 def parse_file(filepath):
     module_name = filepath.replace(PROJECT_PATH + "/", "").replace(".py", "")
@@ -18,6 +20,8 @@ def parse_file(filepath):
         # Add function nodes
         if isinstance(node, ast.FunctionDef):
             params = [arg.arg for arg in node.args.args]
+
+            defined_functions.add(node.name)
 
             source_graph.add_node(
                 node.name,
@@ -46,8 +50,8 @@ def scan_project():
 
 def analyze_blast_radius(target):
     if target not in source_graph:
-        print("Target not found in graph.")
-        return None
+        #print("Target not found in graph.")
+        return set()
 
     impacted = set()
     queue = [target]
@@ -63,6 +67,9 @@ def analyze_blast_radius(target):
     return impacted
 
 def analyze_reverse_dependencies(target):
+    if target not in source_graph:
+        return set()
+        
     impacted = set()
     queue = [target]
 
@@ -201,6 +208,29 @@ def detect_contract_break_by_intent(change_intent):
 
     return False
 
+def detect_unknown_zones():
+    unknown = []
+
+    for node in source_graph.nodes():
+        if node not in source_graph.nodes():
+            continue
+
+        # If function called but not defined in project
+        if source_graph.out_degree(node) == 0 and node not in defined_functions:
+            unknown.append(node)
+
+    return unknown
+
+def detect_external_calls():
+    external = []
+
+    for edge in source_graph.edges():
+        target = edge[1]
+        if target not in defined_functions:
+            external.append(target)
+
+    return list(set(external))
+
 if __name__ == "__main__":
 
     scan_project()
@@ -219,24 +249,29 @@ if __name__ == "__main__":
     for edge in source_graph.edges():
         print(edge[0], "→", edge[1])
 
-print("\n==============================")
-print(" CHANGE INTENT INPUT")
-print("==============================")
+    print("\n==============================")
+    print(" CHANGE INTENT INPUT")
+    print("==============================")
 
-change_intent = get_change_intent()
+    change_intent = get_change_intent()
 
-if not change_intent:
-    exit()
+    if not change_intent:
+        exit()
 
-target = change_intent["target"]
-change_type = change_intent["type"]
+    target = change_intent["target"]
+    if target not in source_graph:
+        print("\n❌ ERROR: Target function not found in project.")
+        print("Please enter a valid function or class name.")
+        exit()
+    
+    change_type = change_intent["type"]
 
-forward = analyze_blast_radius(target)
-reverse = analyze_reverse_dependencies(target)
+    forward = analyze_blast_radius(target)
+    reverse = analyze_reverse_dependencies(target)
 
-if forward and reverse:
+    if forward and reverse:
 
-    explanation_report = generate_explanation(target, forward, reverse)
+        explanation_report = generate_explanation(target, forward, reverse)
 
     print("\n==============================")
     print(" BLAST RADIUS REPORT")
@@ -275,6 +310,12 @@ if forward and reverse:
         "impact": explanation_report
     })
 
+    external_calls = detect_external_calls()
+
+    if external_calls:
+        print("\n⚠ UNKNOWN IMPACT ZONES DETECTED:")
+        for item in external_calls:
+            print(" - External or dynamic dependency:", item)
 
     trace_paths = find_trace_paths(target)
 
@@ -289,6 +330,4 @@ if forward and reverse:
         print("\n⚠ CONTRACT BREAKING CHANGE DETECTED")
         print("Reason: API contract or public interface modified")
 
-    if detect_contract_break(target):
-        print("\n⚠ Potential Contract Breaking Change Detected")
-
+   
